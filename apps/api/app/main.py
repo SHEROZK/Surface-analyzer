@@ -165,7 +165,7 @@ async def capabilities():
 
 
 @app.get("/api/v1/products", tags=["catalog"])
-def list_products(current_user: User = Depends(get_current_user)):
+def list_products(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     tenant_id = current_user.tenant_id
     products = db.scalars(select(TileProduct).where(TileProduct.tenant_id == tenant_id).order_by(TileProduct.created_at.desc())).all()
     return [serialize_product(p) for p in products]
@@ -331,8 +331,7 @@ def detect_surface(project_id: uuid.UUID, mode: str = "floor", current_user: Use
 
 @app.get("/api/v1/projects/{project_id}", tags=["projects"])
 def get_project(project_id: uuid.UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)): 
-    tenant = get_default_tenant(db)
-    project = db.scalar(select(Project).where(Project.id == project_id, Project.tenant_id == tenant.id))
+    project = db.scalar(select(Project).where(Project.id == project_id, Project.tenant_id == current_user.tenant_id))
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found.")
     return {
