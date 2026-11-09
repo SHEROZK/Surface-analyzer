@@ -13,6 +13,6 @@ COMPOSE=(docker compose -f docker-compose.production.yml)
 restart_api() { "${COMPOSE[@]}" start api >/dev/null || true; }
 trap restart_api EXIT
 "${COMPOSE[@]}" exec -T postgres sh -c 'pg_restore --clean --if-exists --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "$BACKUP/database.dump"
-"${COMPOSE[@]}" exec -T api sh -c 'find /data/uploads -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +'
+"${COMPOSE[@]}" run --rm --no-deps --entrypoint sh api -c 'find /data/uploads -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +'
 "${COMPOSE[@]}" cp "$BACKUP/uploads/." api:/data/uploads/
 echo "Restore completed from $BACKUP"
