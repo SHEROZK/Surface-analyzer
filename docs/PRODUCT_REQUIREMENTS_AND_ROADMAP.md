@@ -9,7 +9,7 @@ The benchmark is the customer journey and feature quality of Roomvo, not its imp
 ## Product principles
 
 1. **Visual trust first.** Product appearance, dimensions, pattern repeat, perspective, grout, and surface boundaries must be controllable and reproducible. Generative AI must not silently invent product details.
-2. **One catalog, many channels.** A tenant manages products once and publishes them to its own visualizer, product pages, dealer network, QR links, kiosks, and API.
+2. **One catalog, many channels.** An organization manages products once and publishes them to its own visualizer, product pages, dealer network, QR links, kiosks, and API.
 3. **Multi-material, not tile-only.** Tiles are the launch vertical; the domain model must support flooring, wood, stone, countertops, wallpaper, paint, panels, pavers, and future surface types.
 4. **Business outcomes.** Every visualization can become a saved design, comparison, sample request, quote request, store visit, or commerce handoff.
 5. **Self-hostable and extensible.** Docker-first deployment, documented APIs, web components/SDK, and S3-compatible storage.
@@ -87,7 +87,7 @@ Generative image models may be offered as an optional enhancement, never as the 
 - Project, ProjectMember, RoomImage, Scene, Surface, SurfaceGeometry, RenderJob, RenderOutput
 - SavedDesign, Comparison, ShareLink
 - Lead, SampleRequest, QuoteRequest, Appointment, Store
-- Embed, Domain, Webhook, Integration, UsageEvent, Subscription, AuditEvent
+- Embed, Domain, Webhook, Integration, UsageEvent, AuditEvent
 
 All customer data belongs to the locally installed organization and is isolated within that installation. A deployment must not require a shared vendor-hosted multi-tenant control plane. Product assets have explicit asset type, dimensions, MIME, checksum, and storage lifecycle.
 
@@ -107,7 +107,7 @@ All customer data belongs to the locally installed organization and is isolated 
 - Add a proper product creation/edit experience with multiple assets and previews.
 - Add CSV import with validation and error report.
 
-**Gate:** a tenant can create, edit, filter, import, and publish a catalog with multiple variants and render assets.
+**Gate:** an organization can create, edit, filter, import, and publish its catalog with multiple variants and render assets.
 
 ### Phase 2 — Deterministic renderer
 - Surface geometry editor and perspective calibration.
@@ -138,7 +138,7 @@ All customer data belongs to the locally installed organization and is isolated 
 ### Phase 5 — Commercial platform
 - Leads, sample/quote requests, appointments, stores, QR and kiosk.
 - Embed SDK, API keys, webhooks, analytics and attribution.
-- Tenant branding, custom domains, role management.
+- Organization branding, custom domains, role management.
 
 **Gate:** a retailer can install the software on its own infrastructure, integrate the visualizer into its website, and trace a lead from product view to request.
 
