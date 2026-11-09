@@ -116,7 +116,7 @@ export default function Workspace() {
     } catch {
       setMessage("Could not connect to the API. Start the Docker Compose stack and refresh.");
     }
-  }, []);
+  }, [apiFetch]);
 
   const loadProject = useCallback(async (id: string) => {
     const response = await apiFetch(API + "/api/v1/projects/" + id);
@@ -130,9 +130,9 @@ export default function Workspace() {
     setDropTarget(null);
     setDetectionConfidence(null);
     setDetectionWarnings([]);
-  }, []);
+  }, [apiFetch]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { if (authToken) void refresh(); }, [refresh, authToken]);
 
   const roomUrl = (selectedProject as (ProjectDetail & {room_image_url?: string}) | null)?.room_image_url || null;
 
