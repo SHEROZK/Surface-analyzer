@@ -235,55 +235,18 @@ def detect_surface(project_id: uuid.UUID, mode: str = "floor", db: Session = Dep
         raise HTTPException(status_code=404, detail="Upload a room photo first.")
     try:
         import cv2
-        import numpy as np
+        from .surface_detection import SurfaceDetectionError, detect_floor_boundary
         image = cv2.imread(str(UPLOAD_DIR / room_asset.storage_key))
         if image is None:
-            raise ValueError("Image could not be decoded.")
-        original_h, original_w = image.shape[:2]
-        if min(original_w, original_h) < 120:
-            raise HTTPException(status_code=422, detail="Room photo is too small for surface detection.")
-        factor = min(1.0, 960.0 / max(original_w, original_h))
-        if factor < 1:
-            image = cv2.resize(image, (int(original_w * factor), int(original_h * factor)), interpolation=cv2.INTER_AREA)
-        h, w = image.shape[:2]
-        mask = np.full((h, w), cv2.GC_PR_BGD, dtype=np.uint8)
-        mask[int(h * .48):, :] = cv2.GC_PR_FGD
-        mask[int(h * .90):, :] = cv2.GC_FGD
-        mask[:int(h * .40), :] = cv2.GC_BGD
-        cv2.ellipse(mask, (w // 2, int(h * .78)), (max(8, int(w * .16)), max(8, int(h * .12))),
-                    0, 0, 360, cv2.GC_FGD, -1)
-        bg_model = np.zeros((1, 65), np.float64)
-        fg_model = np.zeros((1, 65), np.float64)
-        cv2.grabCut(image, mask, None, bg_model, fg_model, 4, cv2.GC_INIT_WITH_MASK)
-        binary = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype("uint8")
-        binary[:int(h * .42), :] = 0
-        count, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
-        candidates = []
-        for label in range(1, count):
-            x, y, cw, ch, area = stats[label]
-            if y + ch >= int(h * .94) and area > h * w * .025:
-                candidates.append((area, label))
-        if not candidates:
-            raise HTTPException(status_code=422, detail="A clear floor boundary was not found. Try a wider room photo or outline it manually.")
-        area, label = max(candidates)
-        component = np.where(labels == label, 255, 0).astype("uint8")
-        component = cv2.morphologyEx(component, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
-        contours, _ = cv2.findContours(component, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contour = max(contours, key=cv2.contourArea)
-        perimeter = cv2.arcLength(contour, True)
-        approx = cv2.approxPolyDP(contour, max(2.0, perimeter * .008), True).reshape(-1, 2)
-        if len(approx) < 3:
-            raise HTTPException(status_code=422, detail="The floor boundary was too ambiguous to outline.")
-        points = [{"x": round(float(x) / w, 5), "y": round(float(y) / h, 5)} for x, y in approx]
-        area_ratio = float(area) / float(h * w)
-        bottom_ratio = float(np.count_nonzero(component[int(h * .94):, :])) / float(max(1, int(h * .06) * w))
-        confidence = max(.15, min(.82, .25 + min(area_ratio, .65) * .55 + bottom_ratio * .18))
-        return {"mode": mode, "points": points, "confidence": round(confidence, 2),
-                "area_ratio": round(area_ratio, 3), "method": "opencv-grabcut-floor-prior"}
+            raise HTTPException(status_code=422, detail="Room image could not be decoded.")
+        result = detect_floor_boundary(image)
+        return {"mode": mode, **result}
     except HTTPException:
         raise
     except ImportError:
         raise HTTPException(status_code=503, detail="Automatic detection is unavailable because the vision dependency is not installed.")
+    except SurfaceDetectionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Automatic detection failed: {str(exc)[:160]}")
 
