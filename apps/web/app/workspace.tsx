@@ -70,6 +70,7 @@ export default function Workspace() {
   const [selectedProject, setSelectedProject] = useState<ProjectDetail | null>(null);
   const [selectedProduct, setSelectedProduct] = useState("");
   const [surfaceProducts, setSurfaceProducts] = useState<{floor:string;wall:string}>({floor:"",wall:""});
+  const [dropTarget, setDropTarget] = useState<"floor" | "wall" | null>(null);
   const [projectName, setProjectName] = useState("");
   const [productName, setProductName] = useState("");
   const [sku, setSku] = useState("");
@@ -115,13 +116,14 @@ export default function Workspace() {
     setSelectedProject({ ...detail, room_image_url: room?.url || null } as ProjectDetail & {room_image_url?: string});
     setPoints([]);
     setSurfaceOutlines({floor: [], wall: []});
+    setSurfaceProducts({floor: "", wall: ""});
+    setDropTarget(null);
     setDetectionConfidence(null);
     setDetectionWarnings([]);
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const activeProduct = products.find(product => product.id === selectedProduct) || null;
   const roomUrl = (selectedProject as (ProjectDetail & {room_image_url?: string}) | null)?.room_image_url || null;
 
   const redraw = useCallback(() => {
@@ -206,6 +208,19 @@ export default function Workspace() {
         ctx.fill();
       }
       ctx.restore();
+      if (surface.mode === dropTarget) {
+        ctx.save();
+        ctx.beginPath();
+        polygon.forEach((point, index) => index === 0 ? ctx.moveTo(point.x * canvas.width, point.y * canvas.height) : ctx.lineTo(point.x * canvas.width, point.y * canvas.height));
+        ctx.closePath();
+        ctx.fillStyle = "rgba(91, 190, 139, .20)";
+        ctx.fill();
+        ctx.setLineDash([Math.max(8, canvas.width / 90), Math.max(5, canvas.width / 150)]);
+        ctx.strokeStyle = "#5bbe8b";
+        ctx.lineWidth = Math.max(4, canvas.width / 250);
+        ctx.stroke();
+        ctx.restore();
+      }
       if (surface.mode === surfaceMode) {
         ctx.save();
         ctx.beginPath();
@@ -223,7 +238,7 @@ export default function Workspace() {
         ctx.restore();
       }
     }
-  }, [points, surfaceOutlines, surfaceMode, surfaceProducts, selectedProduct, scale, opacity, pattern, groutWidth, groutColor]);
+  }, [points, surfaceOutlines, surfaceMode, surfaceProducts, selectedProduct, scale, opacity, pattern, groutWidth, groutColor, dropTarget]);
 
   useEffect(() => { redraw(); }, [redraw, roomUrl, selectedProduct]);
 
@@ -317,8 +332,18 @@ export default function Workspace() {
     setMessage("Material assigned to the " + mode + ". Drag another product onto a surface to replace it.");
   }
 
+  function updateDropTarget(event: React.DragEvent<HTMLCanvasElement>) {
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const point = {x:(event.clientX-rect.left)/rect.width,y:(event.clientY-rect.top)/rect.height};
+    const floorHit = surfaceOutlines.floor.length>=3 && pointInPolygon(point,surfaceOutlines.floor);
+    const wallHit = surfaceOutlines.wall.length>=3 && pointInPolygon(point,surfaceOutlines.wall);
+    setDropTarget(floorHit && wallHit ? surfaceMode : floorHit ? "floor" : wallHit ? "wall" : null);
+  }
+
   function dropProduct(event: React.DragEvent<HTMLCanvasElement>) {
     event.preventDefault();
+    setDropTarget(null);
     const productId = event.dataTransfer.getData("application/surface-product");
     if (!productId) return;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -356,7 +381,7 @@ export default function Workspace() {
       </aside>
       <section className="visualizer-panel"><div className="visualizer-top"><div><div className="panel-title">03 / PHOTO VISUALIZER</div><h2>{selectedProject?.name || "Choose a project"}</h2></div><span className="visualizer-status">{roomUrl?"ROOM LOADED":"AWAITING PHOTO"}</span></div>
         {!selectedProject ? <div className="visualizer-empty"><div className="empty-symbol">＋</div><h3>Start with a project</h3><p>Create a project on the left, then upload a room photo to begin.</p></div> :
-        <><div className="canvas-wrap">{roomUrl?<canvas ref={canvasRef} onClick={addPoint} onDragOver={event=>event.preventDefault()} onDrop={dropProduct} aria-label="Room photo. Drag a material onto the outlined floor or wall to apply it."/>:<div className="upload-empty"><div className="empty-symbol">↑</div><h3>Upload a room photograph</h3><p>JPG, PNG or WebP · up to 15 MB</p><label className="dark-button">Choose room photo<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div>}</div>
+        <><div className="canvas-wrap">{roomUrl?<canvas ref={canvasRef} onClick={addPoint} onDragOver={updateDropTarget} onDragLeave={()=>setDropTarget(null)} onDrop={dropProduct} aria-label="Room photo. Drag a material onto the outlined floor or wall to apply it."/>:<div className="upload-empty"><div className="empty-symbol">↑</div><h3>Upload a room photograph</h3><p>JPG, PNG or WebP · up to 15 MB</p><label className="dark-button">Choose room photo<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div>}</div>
         {roomUrl&&<div className="visualizer-controls"><div className="control-row"><span>Surface outline</span><span>{points.length<3?"Not detected":points.length+" boundary points"} · Floor: {surfaceOutlines.floor.length>=3?"saved":"—"} · Wall: {surfaceOutlines.wall.length>=3?"saved":"—"}{detectionConfidence!==null?" · "+Math.round(detectionConfidence*100)+"% heuristic score":""}</span></div><div className="control-row"><span>Applied materials</span><span>Floor: {products.find(product=>product.id===(surfaceProducts.floor||selectedProduct))?.name||"None"} · Wall: {products.find(product=>product.id===(surfaceProducts.wall||selectedProduct))?.name||"None"}</span></div>{detectionWarnings.length>0&&<ul className="helper">{detectionWarnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>}<div className="range-row"><label>Surface type <select value={surfaceMode} onChange={e=>{const nextMode=e.target.value as "floor" | "wall";setSurfaceOutlines(current=>({...current,[surfaceMode]:points}));setPoints(surfaceOutlines[nextMode]);setSurfaceMode(nextMode);setDetectionConfidence(null);setDetectionWarnings([]);}}><option value="floor">Floor</option><option value="wall">Wall</option></select></label></div><div className="control-actions"><button disabled={detecting||busy} onClick={()=>void autoDetectFloor()}>{detecting?"Detecting…": "✦ Auto-detect " + (surfaceMode === "floor" ? "floor" : "wall")}</button><button onClick={()=>{setPoints([]);setSurfaceOutlines(current=>({...current,[surfaceMode]:[]}));setDetectionConfidence(null);setDetectionWarnings([]);}}>Clear outline</button><button onClick={()=>setPoints(current=>{const next=current.slice(0,-1);setSurfaceOutlines(saved=>({...saved,[surfaceMode]:next}));return next;})}>Undo point</button><label className="file-replace">Replace photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div><div className="range-row"><label>Pattern scale <input type="range" min=".15" max=".9" step=".01" value={scale} onChange={e=>setScale(Number(e.target.value))}/></label><label>Opacity <input type="range" min=".2" max="1" step=".01" value={opacity} onChange={e=>setOpacity(Number(e.target.value))}/></label></div><div className="range-row"><label>Tile layout <select value={pattern} onChange={e=>setPattern(e.target.value)}><option value="grid">Straight / grid</option><option value="brick">Brick / offset</option><option value="diagonal">Diagonal</option><option value="herringbone">Herringbone</option></select></label><label>Grout width <input type="range" min=".004" max=".04" step=".001" value={groutWidth} onChange={e=>setGroutWidth(Number(e.target.value))}/></label></div><div className="range-row"><label>Grout colour <input type="color" value={groutColor} onChange={e=>setGroutColor(e.target.value)}/></label></div><p className="helper-text">Choose Floor or Wall, then use Auto-detect to propose the visible surface boundary from the room photo. Review the result: click the image to add boundary points, use Undo point to refine it, or Clear outline to start again. Detection may need correction around rugs, furniture, reflections or unusual camera angles.</p></div>}</>}
       </section>
     </div>
