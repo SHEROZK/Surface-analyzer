@@ -65,6 +65,12 @@ function drawImageOnQuad(ctx: CanvasRenderingContext2D, image: CanvasImageSource
 }
 
 export default function Workspace() {
+  const [authToken, setAuthToken] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authName, setAuthName] = useState("");
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [registerMode, setRegisterMode] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<ProjectDetail | null>(null);
@@ -95,9 +101,13 @@ export default function Workspace() {
   const productTexturesRef = useRef<Record<string,{primary:HTMLImageElement|null;faces:HTMLImageElement[]}>>({});
   const lastAutoDetectionRef = useRef("");
 
+  useEffect(() => { const saved = window.sessionStorage.getItem("surface-access-token"); if (saved) setAuthToken(saved); }, []);
+
+  const apiFetch = useCallback((url: string, init: RequestInit = {}) => fetch(url, { ...init, headers: { ...(init.headers || {}), ...(authToken ? { Authorization: "Bearer " + authToken } : {}) } }), [authToken]);
+
   const refresh = useCallback(async () => {
     try {
-      const [p, r] = await Promise.all([fetch(API + "/api/v1/products"), fetch(API + "/api/v1/projects")]);
+      const [p, r] = await Promise.all([apiFetch(API + "/api/v1/products"), apiFetch(API + "/api/v1/projects")]);
       if (!p.ok || !r.ok) throw new Error("API unavailable");
       const productData: Product[] = await p.json();
       setProducts(productData);
@@ -109,7 +119,7 @@ export default function Workspace() {
   }, []);
 
   const loadProject = useCallback(async (id: string) => {
-    const response = await fetch(API + "/api/v1/projects/" + id);
+    const response = await apiFetch(API + "/api/v1/projects/" + id);
     if (!response.ok) return;
     const detail: ProjectDetail = await response.json();
     const room = detail.assets.find(asset => asset.type === "room");
@@ -263,7 +273,7 @@ export default function Workspace() {
     if (!selectedProject) return;
     setDetecting(true); setMessage("");
     try {
-      const response = await fetch(API + "/api/v1/projects/" + selectedProject.id + "/detect-surface?mode=" + surfaceMode, { method: "POST" });
+      const response = await apiFetch(API + "/api/v1/projects/" + selectedProject.id + "/detect-surface?mode=" + surfaceMode, { method: "POST" });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "Could not detect the floor.");
       setPoints(result.points);
@@ -288,11 +298,25 @@ export default function Workspace() {
     void autoDetectFloor();
   }, [selectedProject?.id, roomUrl]);
 
+  async function submitAuth(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true); setMessage("");
+    try {
+      const endpoint = registerMode ? "/api/v1/auth/register" : "/api/v1/auth/login";
+      const payload = registerMode ? {workspace_name:workspaceName,full_name:authName,email:authEmail,password:authPassword} : {email:authEmail,password:authPassword};
+      const response = await fetch(API + endpoint, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "Authentication failed.");
+      window.sessionStorage.setItem("surface-access-token",result.access_token);
+      setAuthToken(result.access_token); setAuthPassword(""); setMessage("Signed in to " + result.workspace.name + ".");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Authentication failed."); }
+    finally { setBusy(false); }
+  }
+
   async function createProject(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setMessage("");
     try {
       const data = new FormData(); data.set("name", projectName);
-      const response = await fetch(API + "/api/v1/projects", { method: "POST", body: data });
+      const response = await apiFetch(API + "/api/v1/projects", { method: "POST", body: data });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "Could not create project");
       setProjectName(""); await refresh(); await loadProject(result.id); setMessage("Project created.");
@@ -305,7 +329,7 @@ export default function Workspace() {
     const formElement = event.currentTarget;
     try {
       const form = new FormData(formElement);
-      const response = await fetch(API + "/api/v1/products", { method: "POST", body: form });
+      const response = await apiFetch(API + "/api/v1/products", { method: "POST", body: form });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "Could not save tile");
       formElement.reset(); await refresh(); setSelectedProduct(result.id); setMessage("Product added to your material library.");
@@ -318,7 +342,7 @@ export default function Workspace() {
     setBusy(true); setMessage("");
     try {
       const data = new FormData(); data.set("image", file);
-      const response = await fetch(API + "/api/v1/projects/" + selectedProject.id + "/room-image", { method: "POST", body: data });
+      const response = await apiFetch(API + "/api/v1/projects/" + selectedProject.id + "/room-image", { method: "POST", body: data });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "Upload failed");
       await loadProject(selectedProject.id); setMessage("Room photo uploaded. Detecting the selected surface automatically…");
@@ -364,8 +388,10 @@ export default function Workspace() {
     setSurfaceOutlines(current => ({...current, [surfaceMode]: [...current[surfaceMode], nextPoint]}));
   }
 
+  if (!authToken) return <main className="app-shell"><header className="app-nav"><a className="brand" href="/"><span className="brand-mark">S</span> SURFACE<span className="muted">ANALYZER</span></a><span className="status-dot">SECURE WORKSPACE</span></header><section className="workspace-head"><div><div className="eyebrow">SURFACE ANALYZER</div><h1>Your materials.<br/><em>Your workspace.</em></h1><p>Sign in or create a workspace to manage your material catalog and room visualizations.</p></div></section><section className="panel" style={{maxWidth:480,margin:"0 auto",padding:28}}><div className="panel-title"><span>{registerMode?"CREATE WORKSPACE":"WELCOME BACK"}</span></div><form className="stack-form" onSubmit={submitAuth}>{registerMode&&<><input value={workspaceName} onChange={e=>setWorkspaceName(e.target.value)} placeholder="Workspace name" minLength={2} required/><input value={authName} onChange={e=>setAuthName(e.target.value)} placeholder="Your full name" required/></>}<input type="email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="Email address" required/><input type="password" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="Password (minimum 10 characters)" minLength={registerMode?10:1} required/><button className="dark-button" disabled={busy}>{busy?"Please wait…":registerMode?"Create workspace":"Sign in"}</button></form><button className="control-actions" onClick={()=>setRegisterMode(v=>!v)}>{registerMode?"Already have an account? Sign in":"New here? Create a workspace"}</button>{message&&<p className="helper-text">{message}</p>}</section></main>;
+
   return <main className="app-shell">
-    <header className="app-nav"><a className="brand" href="/"><span className="brand-mark">S</span> SURFACE<span className="muted">ANALYZER</span></a><span className="workspace-tag">WORKSPACE / SURFACE STUDIO</span><span className="status-dot">LOCAL MVP</span></header>
+    <header className="app-nav"><a className="brand" href="/"><span className="brand-mark">S</span> SURFACE<span className="muted">ANALYZER</span></a><span className="workspace-tag">WORKSPACE / SURFACE STUDIO</span><button className="status-dot" onClick={()=>{window.sessionStorage.removeItem("surface-access-token");setAuthToken("");setProducts([]);setProjects([]);setSelectedProject(null);}}>SIGN OUT</button></header>
     <section className="workspace-head"><div><div className="eyebrow">YOUR MATERIAL WORKSPACE</div><h1>Make the room<br/><em>your canvas.</em></h1><p>Build a multi-material catalog, upload a room, outline a surface and preview finishes in place.</p></div><div className="head-count"><strong>{projects.length.toString().padStart(2,"0")}</strong><span>PROJECTS</span><strong>{products.length.toString().padStart(2,"0")}</strong><span>MATERIALS</span></div></section>
     {message && <div className="notice" role="status">{message}</div>}
     <div className="studio-grid">
