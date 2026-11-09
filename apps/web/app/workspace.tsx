@@ -252,21 +252,56 @@ export default function Workspace() {
 
   useEffect(() => { redraw(); }, [redraw, roomUrl, selectedProduct]);
 
-  function loadRoom(url: string) {
+  async function fetchPrivateImage(url: string): Promise<{ image: HTMLImageElement; objectUrl: string }> {
+    const response = await apiFetch(API + url);
+    if (!response.ok) throw new Error("Could not load private workspace media.");
+    const objectUrl = URL.createObjectURL(await response.blob());
     const image = new Image();
-    image.onload = () => { roomImageRef.current = image; redraw(); };
-    image.src = API + url;
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("Image could not be decoded."));
+      image.src = objectUrl;
+    });
+    return { image, objectUrl };
   }
-  useEffect(() => { if (roomUrl) loadRoom(roomUrl); else { roomImageRef.current = null; redraw(); } }, [roomUrl]);
+
   useEffect(() => {
-    for (const product of products) {
-      const urls = [product.material_url, ...(product.assets?.filter(asset => asset.role === "texture_face").map(asset => asset.url) || [])].filter((url): url is string => Boolean(url));
-      if (!urls.length || productTexturesRef.current[product.id]) continue;
-      const images = urls.map(url => { const image = new Image(); image.onload = () => redraw(); image.src = API + url; return image; });
-      productTexturesRef.current[product.id] = {primary:images[0] || null,faces:images.slice(1)};
-    }
-    redraw();
-  }, [products, redraw]);
+    let cancelled = false;
+    let objectUrl = "";
+    roomImageRef.current = null;
+    if (!roomUrl) { redraw(); return; }
+    void fetchPrivateImage(roomUrl).then(({image, objectUrl: url}) => {
+      if (cancelled) { URL.revokeObjectURL(url); return; }
+      objectUrl = url;
+      roomImageRef.current = image;
+      redraw();
+    }).catch(() => setMessage("Could not load this room image. Please sign in again."));
+    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [roomUrl, apiFetch, redraw]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const createdUrls: string[] = [];
+    productTexturesRef.current = {};
+    void (async () => {
+      for (const product of products) {
+        const urls = [product.material_url, ...(product.assets?.filter(asset => asset.role === "texture_face").map(asset => asset.url) || [])].filter((url): url is string => Boolean(url));
+        if (!urls.length) continue;
+        const loaded: HTMLImageElement[] = [];
+        for (const url of urls) {
+          try {
+            const result = await fetchPrivateImage(url);
+            if (cancelled) { URL.revokeObjectURL(result.objectUrl); return; }
+            createdUrls.push(result.objectUrl);
+            loaded.push(result.image);
+          } catch { /* Keep the rest of the catalog usable if one asset is unavailable. */ }
+        }
+        productTexturesRef.current[product.id] = {primary:loaded[0] || null,faces:loaded.slice(1)};
+      }
+      if (!cancelled) redraw();
+    })();
+    return () => { cancelled = true; createdUrls.forEach(URL.revokeObjectURL); productTexturesRef.current = {}; };
+  }, [products, apiFetch, redraw]);
 
 
   async function autoDetectFloor() {
