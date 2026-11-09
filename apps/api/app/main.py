@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, Security
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -75,7 +75,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+
 
 
 def get_default_tenant(db: Session) -> Tenant:
@@ -164,6 +164,33 @@ async def capabilities():
     ]
 
 
+@app.get("/api/v1/media/{storage_key}", tags=["media"])
+def get_private_media(storage_key: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Never trust a client-supplied path: only serve a basename that belongs to
+    # a product or project owned by the authenticated workspace.
+    if not storage_key or Path(storage_key).name != storage_key or storage_key in {".", ".."}:
+        raise HTTPException(status_code=404, detail="Media not found.")
+    product_asset = db.scalar(
+        select(ProductAsset.id).join(TileProduct, ProductAsset.product_id == TileProduct.id).where(
+            ProductAsset.storage_key == storage_key, TileProduct.tenant_id == current_user.tenant_id
+        )
+    )
+    legacy_product = db.scalar(select(TileProduct.id).where(
+        TileProduct.material_asset_key == storage_key, TileProduct.tenant_id == current_user.tenant_id
+    ))
+    project_asset = db.scalar(
+        select(ProjectAsset.id).join(Project, ProjectAsset.project_id == Project.id).where(
+            ProjectAsset.storage_key == storage_key, Project.tenant_id == current_user.tenant_id
+        )
+    )
+    if not (product_asset or legacy_product or project_asset):
+        raise HTTPException(status_code=404, detail="Media not found.")
+    path = UPLOAD_DIR / storage_key
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Media not found.")
+    return FileResponse(path, media_type="application/octet-stream", filename=storage_key)
+
+
 @app.get("/api/v1/products", tags=["catalog"])
 def list_products(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     tenant_id = current_user.tenant_id
@@ -173,11 +200,11 @@ def list_products(current_user: User = Depends(get_current_user), db: Session = 
 
 def serialize_product(product: TileProduct):
     assets = [{
-        "id": str(asset.id), "role": asset.role, "url": "/uploads/" + asset.storage_key,
+        "id": str(asset.id), "role": asset.role, "url": "/api/v1/media/" + asset.storage_key,
         "name": asset.original_name, "mime_type": asset.mime_type, "sort_order": asset.sort_order,
     } for asset in product.assets]
     texture = next((a["url"] for a in assets if a["role"] == "texture"), None)
-    legacy_texture = "/uploads/" + product.material_asset_key if product.material_asset_key else None
+    legacy_texture = "/api/v1/media/" + product.material_asset_key if product.material_asset_key else None
     return {
         "id": str(product.id), "name": product.name, "sku": product.sku, "description": product.description,
         "category": product.category, "brand": product.brand, "collection": product.collection,
@@ -265,7 +292,7 @@ def list_projects(current_user: User = Depends(get_current_user), db: Session = 
     projects = db.scalars(select(Project).where(Project.tenant_id == current_user.tenant_id).order_by(Project.created_at.desc())).all()
     return [{
         "id": str(p.id), "name": p.name, "status": p.status,
-        "room_image_url": next((f"/uploads/{a.storage_key}" for a in p.assets if a.asset_type == "room"), None),
+        "room_image_url": next((f"/api/v1/media/{a.storage_key}" for a in p.assets if a.asset_type == "room"), None),
         "created_at": p.created_at,
     } for p in projects]
 
@@ -292,7 +319,7 @@ async def upload_room_image(project_id: uuid.UUID, image: UploadFile = File(...)
                          metadata_json={"original_name": image.filename, "size_bytes": size})
     db.add(asset)
     db.commit()
-    return {"asset_id": str(asset.id), "room_image_url": f"/uploads/{key}", "size_bytes": size}
+    return {"asset_id": str(asset.id), "room_image_url": f"/api/v1/media/{key}", "size_bytes": size}
 
 
 @app.post("/api/v1/projects/{project_id}/detect-surface", tags=["surface-analysis"])
@@ -336,5 +363,5 @@ def get_project(project_id: uuid.UUID, current_user: User = Depends(get_current_
         raise HTTPException(status_code=404, detail="Project not found.")
     return {
         "id": str(project.id), "name": project.name, "status": project.status,
-        "assets": [{"id": str(a.id), "type": a.asset_type, "url": f"/uploads/{a.storage_key}"} for a in project.assets],
+        "assets": [{"id": str(a.id), "type": a.asset_type, "url": f"/api/v1/media/{a.storage_key}"} for a in project.assets],
     }
