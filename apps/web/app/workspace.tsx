@@ -124,7 +124,7 @@ export default function Workspace() {
             drawCell(col * stepX + offset, row * stepY, cellW, cellH, seed, diagonal);
           }
         }
-      }      } else {
+      } else {
         ctx.fillStyle = "rgba(165,176,139,.58)";
         ctx.fill();
       }
