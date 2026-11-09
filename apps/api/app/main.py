@@ -35,6 +35,14 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 def get_current_user(credentials: HTTPAuthorizationCredentials | None = Security(auth_scheme), db: Session = Depends(get_db)) -> User:
     if credentials is None or credentials.scheme.lower() != 'bearer':
         raise HTTPException(status_code=401, detail='Sign in to access this workspace.', headers={'WWW-Authenticate': 'Bearer'})
@@ -68,14 +76,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 def get_default_tenant(db: Session) -> Tenant:
