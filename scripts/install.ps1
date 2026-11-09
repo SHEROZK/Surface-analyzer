@@ -30,7 +30,7 @@ if (-not (Test-Path ".env")) {
   $envText = Get-Content ".env.production.example" -Raw
   $envText = $envText.Replace("replace-this-password", $password)
   $envText = $envText.Replace("replace-with-a-random-secret-at-least-32-characters", $secret)
-  Set-Content -Path ".env" -Value $envText -Encoding utf8
+  [System.IO.File]::WriteAllText((Join-Path $Root ".env"), $envText, [System.Text.UTF8Encoding]::new($false))
   Write-Host "Created .env with unique database and signing secrets."
 } else {
   Write-Host "Using existing .env; installer will not overwrite your configuration."
