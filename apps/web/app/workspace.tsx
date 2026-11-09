@@ -24,6 +24,9 @@ export default function Workspace() {
   const [points, setPoints] = useState<{x:number;y:number}[]>([]);
   const [scale, setScale] = useState(0.45);
   const [opacity, setOpacity] = useState(0.88);
+  const [pattern, setPattern] = useState("grid");
+  const [groutWidth, setGroutWidth] = useState(0.012);
+  const [groutColor, setGroutColor] = useState("#aaa69c");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const roomImageRef = useRef<HTMLImageElement | null>(null);
   const textureImageRef = useRef<HTMLImageElement | null>(null);
@@ -74,30 +77,51 @@ export default function Workspace() {
       const primaryTexture = textureImageRef.current;
       const faces = [primaryTexture, ...textureFacesRef.current].filter((image): image is HTMLImageElement => Boolean(image?.complete && image.naturalWidth));
       if (faces.length) {
-        const tileWidth = Math.max(28, canvas.width * scale / 2.5);
-        const tileHeight = tileWidth * (faces[0].naturalHeight / faces[0].naturalWidth);
-        const grout = Math.max(1, tileWidth * 0.012);
+        const baseWidth = Math.max(28, canvas.width * scale / 2.5);
+        const baseHeight = baseWidth * (faces[0].naturalHeight / faces[0].naturalWidth);
+        const gap = Math.max(1, baseWidth * groutWidth);
         ctx.globalAlpha = opacity;
-        ctx.fillStyle = "#aaa69c";
+        ctx.fillStyle = groutColor;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        const columns = Math.ceil(canvas.width / tileWidth) + 2;
-        const rows = Math.ceil(canvas.height / tileHeight) + 2;
-        for (let row = -1; row < rows; row++) {
-          for (let column = -1; column < columns; column++) {
-            const seed = Math.abs((row * 73856093) ^ (column * 19349663));
-            const face = faces[seed % faces.length];
-            const offset = row % 2 === 1 ? tileWidth / 2 : 0;
-            const x = column * tileWidth + offset;
-            const y = row * tileHeight;
-            ctx.save();
-            ctx.translate(x + tileWidth / 2, y + tileHeight / 2);
-            if (seed % 7 === 0) ctx.scale(-1, 1);
-            if (seed % 11 === 0) ctx.scale(1, -1);
-            ctx.drawImage(face, -tileWidth / 2 + grout / 2, -tileHeight / 2 + grout / 2, tileWidth - grout, tileHeight - grout);
-            ctx.restore();
+        const drawCell = (x:number, y:number, w:number, h:number, seed:number, angle=0) => {
+          const face = faces[Math.abs(seed) % faces.length];
+          ctx.save();
+          ctx.translate(x + w / 2, y + h / 2);
+          ctx.rotate(angle);
+          if (seed % 7 === 0) ctx.scale(-1, 1);
+          if (seed % 11 === 0) ctx.scale(1, -1);
+          ctx.drawImage(face, -w / 2 + gap / 2, -h / 2 + gap / 2, w - gap, h - gap);
+          ctx.restore();
+        };
+        if (pattern === "herringbone") {
+          const w = baseWidth * 0.5;
+          const h = baseHeight;
+          const stepX = w + gap;
+          const stepY = h + gap;
+          const rows = Math.ceil(canvas.height / stepY) + 4;
+          const cols = Math.ceil(canvas.width / stepX) + 4;
+          for (let row=-2; row<rows; row++) for (let col=-2; col<cols; col++) {
+            const x = col * stepX * 2 + (row % 2 ? stepX : 0);
+            const y = row * stepY;
+            const seed = (row * 73856093) ^ (col * 19349663);
+            drawCell(x, y, w, h, seed, 0);
+            drawCell(x + w + gap, y + h / 2, w, h, seed + 13, Math.PI / 2);
+          }
+        } else {
+          const diagonal = pattern === "diagonal" ? Math.PI / 4 : 0;
+          const cellW = pattern === "diagonal" ? baseWidth * 1.414 : baseWidth;
+          const cellH = pattern === "diagonal" ? baseHeight * 1.414 : baseHeight;
+          const stepX = cellW + gap;
+          const stepY = cellH + gap;
+          const rows = Math.ceil(canvas.height / stepY) + 4;
+          const cols = Math.ceil(canvas.width / stepX) + 4;
+          for (let row=-2; row<rows; row++) for (let col=-2; col<cols; col++) {
+            const offset = pattern === "brick" && row % 2 !== 0 ? stepX / 2 : 0;
+            const seed = (row * 73856093) ^ (col * 19349663);
+            drawCell(col * stepX + offset, row * stepY, cellW, cellH, seed, diagonal);
           }
         }
-      } else {
+      }      } else {
         ctx.fillStyle = "rgba(165,176,139,.58)";
         ctx.fill();
       }
@@ -117,7 +141,7 @@ export default function Workspace() {
       ctx.fillStyle = "#d9e3c4";
       ctx.fill();
     });
-  }, [points, scale, opacity]);
+  }, [points, scale, opacity, pattern, groutWidth, groutColor]);
 
   useEffect(() => { redraw(); }, [redraw, roomUrl, selectedProduct]);
 
@@ -205,7 +229,7 @@ export default function Workspace() {
       <section className="visualizer-panel"><div className="visualizer-top"><div><div className="panel-title">03 / PHOTO VISUALIZER</div><h2>{selectedProject?.name || "Choose a project"}</h2></div><span className="visualizer-status">{roomUrl?"ROOM LOADED":"AWAITING PHOTO"}</span></div>
         {!selectedProject ? <div className="visualizer-empty"><div className="empty-symbol">＋</div><h3>Start with a project</h3><p>Create a project on the left, then upload a room photo to begin.</p></div> :
         <><div className="canvas-wrap">{roomUrl?<canvas ref={canvasRef} onClick={addPoint} aria-label="Room photo. Click to outline the surface to visualize."/>:<div className="upload-empty"><div className="empty-symbol">↑</div><h3>Upload a room photograph</h3><p>JPG, PNG or WebP · up to 15 MB</p><label className="dark-button">Choose room photo<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div>}</div>
-        {roomUrl&&<div className="visualizer-controls"><div className="control-row"><span>Surface outline</span><span>{points.length<3?"Click at least 3 points":points.length+" points selected"}</span></div><div className="control-actions"><button onClick={()=>setPoints([])}>Clear outline</button><button onClick={()=>setPoints(p=>p.slice(0,-1))}>Undo point</button><label className="file-replace">Replace photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div><div className="range-row"><label>Pattern scale <input type="range" min=".15" max=".9" step=".01" value={scale} onChange={e=>setScale(Number(e.target.value))}/></label><label>Opacity <input type="range" min=".2" max="1" step=".01" value={opacity} onChange={e=>setOpacity(Number(e.target.value))}/></label></div><p className="helper-text">Choose a product with a seamless texture image. Add texture-face variations to reduce obvious repetition, then click around the floor or wall boundary. The outline closes automatically after three points. Use Undo point or Clear outline to refine it.</p></div>}</>}
+        {roomUrl&&<div className="visualizer-controls"><div className="control-row"><span>Surface outline</span><span>{points.length<3?"Click at least 3 points":points.length+" points selected"}</span></div><div className="control-actions"><button onClick={()=>setPoints([])}>Clear outline</button><button onClick={()=>setPoints(p=>p.slice(0,-1))}>Undo point</button><label className="file-replace">Replace photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div><div className="range-row"><label>Pattern scale <input type="range" min=".15" max=".9" step=".01" value={scale} onChange={e=>setScale(Number(e.target.value))}/></label><label>Opacity <input type="range" min=".2" max="1" step=".01" value={opacity} onChange={e=>setOpacity(Number(e.target.value))}/></label></div><div className="range-row"><label>Tile layout <select value={pattern} onChange={e=>setPattern(e.target.value)}><option value="grid">Straight / grid</option><option value="brick">Brick / offset</option><option value="diagonal">Diagonal</option><option value="herringbone">Herringbone</option></select></label><label>Grout width <input type="range" min=".004" max=".04" step=".001" value={groutWidth} onChange={e=>setGroutWidth(Number(e.target.value))}/></label></div><div className="range-row"><label>Grout colour <input type="color" value={groutColor} onChange={e=>setGroutColor(e.target.value)}/></label></div><p className="helper-text">Choose a product with a seamless texture image, select a layout and adjust grout. Add texture-face variations to reduce obvious repetition, then click around the floor or wall boundary. The outline closes automatically after three points. Use Undo point or Clear outline to refine it.</p></div>}</>}
       </section>
     </div>
     <footer className="studio-footer"><span>© 2026 SURFACE ANALYZER</span><span>PHOTO WORKFLOW MVP · MULTI-MATERIAL CATALOG</span></footer>
