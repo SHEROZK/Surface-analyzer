@@ -32,6 +32,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-surface}:${POSTGRES_PASSWORD:-surface_dev_password}@postgres:5432/${POSTGRES_DB:-surface_analyzer}
       REDIS_URL: redis://redis:6379/0
       APP_ENV: development
+      AUTH_SECRET: ${AUTH_SECRET:-local-development-secret-change-before-deploy-000000000000}
       CORS_ORIGINS: http://localhost:3000
       UPLOAD_DIR: /data/uploads
     ports:
