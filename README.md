@@ -23,7 +23,11 @@ Self-hosted surface visualization software for tiles and other architectural fin
 - MinIO infrastructure (object-storage integration is a follow-on; MVP uploads use a persistent local Docker volume)
 - Docker Compose local environment
 
-## Run locally
+## Install for a business
+
+For a customer-managed installation, use the production Compose stack and Windows installer. See [Self-hosted installation](docs/SELF_HOSTED_INSTALLATION.md). The installer generates secrets and does not overwrite an existing `.env` file.
+
+## Run locally (development)
 Requirements: Docker Desktop with Docker Compose.
 
 1. Clone the repository.
