@@ -33,6 +33,7 @@ export default function Workspace() {
   const roomImageRef = useRef<HTMLImageElement | null>(null);
   const textureImageRef = useRef<HTMLImageElement | null>(null);
   const textureFacesRef = useRef<HTMLImageElement[]>([]);
+  const lastAutoDetectionRef = useRef("");
 
   const refresh = useCallback(async () => {
     try {
@@ -186,6 +187,18 @@ export default function Workspace() {
     } finally { setDetecting(false); }
   }
 
+
+
+  // Propose a floor outline automatically whenever a room image is loaded or replaced.
+  // The ref prevents duplicate requests during the same project/image render cycle.
+  useEffect(() => {
+    if (!selectedProject || !roomUrl) return;
+    const detectionKey = selectedProject.id + ":" + roomUrl;
+    if (lastAutoDetectionRef.current === detectionKey) return;
+    lastAutoDetectionRef.current = detectionKey;
+    void autoDetectFloor();
+  }, [selectedProject?.id, roomUrl]);
+
   async function createProject(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setMessage("");
     try {
@@ -219,7 +232,7 @@ export default function Workspace() {
       const response = await fetch(API + "/api/v1/projects/" + selectedProject.id + "/room-image", { method: "POST", body: data });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "Upload failed");
-      await loadProject(selectedProject.id); setMessage("Room photo uploaded. Use Auto-detect floor to find the surface boundary.");
+      await loadProject(selectedProject.id); setMessage("Room photo uploaded. Detecting the floor boundary automatically…");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Upload failed."); }
     finally { setBusy(false); }
   }
