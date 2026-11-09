@@ -71,6 +71,7 @@ export default function Workspace() {
   const [detectionConfidence, setDetectionConfidence] = useState<number | null>(null);
   const [detectionWarnings, setDetectionWarnings] = useState<string[]>([]);
   const [detecting, setDetecting] = useState(false);
+  const [surfaceMode, setSurfaceMode] = useState<"floor" | "wall">("floor");
   const [scale, setScale] = useState(0.45);
   const [opacity, setOpacity] = useState(0.88);
   const [pattern, setPattern] = useState("grid");
@@ -235,13 +236,13 @@ export default function Workspace() {
     if (!selectedProject) return;
     setDetecting(true); setMessage("");
     try {
-      const response = await fetch(API + "/api/v1/projects/" + selectedProject.id + "/detect-surface?mode=floor", { method: "POST" });
+      const response = await fetch(API + "/api/v1/projects/" + selectedProject.id + "/detect-surface?mode=" + surfaceMode, { method: "POST" });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "Could not detect the floor.");
       setPoints(result.points);
       setDetectionConfidence(result.confidence);
       setDetectionWarnings(Array.isArray(result.warnings) ? result.warnings : []);
-      setMessage("Floor outline detected. Review the proposed boundary and refine it if needed.");
+      setMessage((surfaceMode === "floor" ? "Floor" : "Wall") + " outline detected. Review the proposed boundary and refine it if needed.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Automatic floor detection failed.");
     } finally { setDetecting(false); }
@@ -292,7 +293,7 @@ export default function Workspace() {
       const response = await fetch(API + "/api/v1/projects/" + selectedProject.id + "/room-image", { method: "POST", body: data });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "Upload failed");
-      await loadProject(selectedProject.id); setMessage("Room photo uploaded. Detecting the floor boundary automatically…");
+      await loadProject(selectedProject.id); setMessage("Room photo uploaded. Detecting the selected surface automatically…");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Upload failed."); }
     finally { setBusy(false); }
   }
@@ -321,7 +322,7 @@ export default function Workspace() {
       <section className="visualizer-panel"><div className="visualizer-top"><div><div className="panel-title">03 / PHOTO VISUALIZER</div><h2>{selectedProject?.name || "Choose a project"}</h2></div><span className="visualizer-status">{roomUrl?"ROOM LOADED":"AWAITING PHOTO"}</span></div>
         {!selectedProject ? <div className="visualizer-empty"><div className="empty-symbol">＋</div><h3>Start with a project</h3><p>Create a project on the left, then upload a room photo to begin.</p></div> :
         <><div className="canvas-wrap">{roomUrl?<canvas ref={canvasRef} onClick={addPoint} aria-label="Room photo. Click to outline the surface to visualize."/>:<div className="upload-empty"><div className="empty-symbol">↑</div><h3>Upload a room photograph</h3><p>JPG, PNG or WebP · up to 15 MB</p><label className="dark-button">Choose room photo<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div>}</div>
-        {roomUrl&&<div className="visualizer-controls"><div className="control-row"><span>Surface outline</span><span>{points.length<3?"Not detected":points.length+" boundary points"}{detectionConfidence!==null?" · "+Math.round(detectionConfidence*100)+"% heuristic score":""}</span></div>{detectionWarnings.length>0&&<ul className="helper">{detectionWarnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>}<div className="control-actions"><button disabled={detecting||busy} onClick={()=>void autoDetectFloor()}>{detecting?"Detecting floor…":"✦ Auto-detect floor"}</button><button onClick={()=>{setPoints([]);setDetectionConfidence(null);setDetectionWarnings([]);}}>Clear outline</button><button onClick={()=>setPoints(p=>p.slice(0,-1))}>Undo point</button><label className="file-replace">Replace photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div><div className="range-row"><label>Pattern scale <input type="range" min=".15" max=".9" step=".01" value={scale} onChange={e=>setScale(Number(e.target.value))}/></label><label>Opacity <input type="range" min=".2" max="1" step=".01" value={opacity} onChange={e=>setOpacity(Number(e.target.value))}/></label></div><div className="range-row"><label>Tile layout <select value={pattern} onChange={e=>setPattern(e.target.value)}><option value="grid">Straight / grid</option><option value="brick">Brick / offset</option><option value="diagonal">Diagonal</option><option value="herringbone">Herringbone</option></select></label><label>Grout width <input type="range" min=".004" max=".04" step=".001" value={groutWidth} onChange={e=>setGroutWidth(Number(e.target.value))}/></label></div><div className="range-row"><label>Grout colour <input type="color" value={groutColor} onChange={e=>setGroutColor(e.target.value)}/></label></div><p className="helper-text">Use Auto-detect floor to propose the visible floor boundary from the room photo. Review the result: click the image to add boundary points, use Undo point to refine it, or Clear outline to start again. Detection may need correction around rugs, furniture, reflections or unusual camera angles.</p></div>}</>}
+        {roomUrl&&<div className="visualizer-controls"><div className="control-row"><span>Surface outline</span><span>{points.length<3?"Not detected":points.length+" boundary points"}{detectionConfidence!==null?" · "+Math.round(detectionConfidence*100)+"% heuristic score":""}</span></div>{detectionWarnings.length>0&&<ul className="helper">{detectionWarnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>}<div className="range-row"><label>Surface type <select value={surfaceMode} onChange={e=>{setSurfaceMode(e.target.value as "floor" | "wall");setPoints([]);setDetectionConfidence(null);setDetectionWarnings([]);}}><option value="floor">Floor</option><option value="wall">Wall</option></select></label></div><div className="control-actions"><button disabled={detecting||busy} onClick={()=>void autoDetectFloor()}>{detecting?"Detecting…": "✦ Auto-detect " + (surfaceMode === "floor" ? "floor" : "wall")}</button><button onClick={()=>{setPoints([]);setDetectionConfidence(null);setDetectionWarnings([]);}}>Clear outline</button><button onClick={()=>setPoints(p=>p.slice(0,-1))}>Undo point</button><label className="file-replace">Replace photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div><div className="range-row"><label>Pattern scale <input type="range" min=".15" max=".9" step=".01" value={scale} onChange={e=>setScale(Number(e.target.value))}/></label><label>Opacity <input type="range" min=".2" max="1" step=".01" value={opacity} onChange={e=>setOpacity(Number(e.target.value))}/></label></div><div className="range-row"><label>Tile layout <select value={pattern} onChange={e=>setPattern(e.target.value)}><option value="grid">Straight / grid</option><option value="brick">Brick / offset</option><option value="diagonal">Diagonal</option><option value="herringbone">Herringbone</option></select></label><label>Grout width <input type="range" min=".004" max=".04" step=".001" value={groutWidth} onChange={e=>setGroutWidth(Number(e.target.value))}/></label></div><div className="range-row"><label>Grout colour <input type="color" value={groutColor} onChange={e=>setGroutColor(e.target.value)}/></label></div><p className="helper-text">Choose Floor or Wall, then use Auto-detect to propose the visible surface boundary from the room photo. Review the result: click the image to add boundary points, use Undo point to refine it, or Clear outline to start again. Detection may need correction around rugs, furniture, reflections or unusual camera angles.</p></div>}</>}
       </section>
     </div>
     <footer className="studio-footer"><span>© 2026 SURFACE ANALYZER</span><span>PHOTO WORKFLOW MVP · MULTI-MATERIAL CATALOG</span></footer>
