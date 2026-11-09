@@ -121,6 +121,7 @@ async def create_product(
     material: UploadFile | None = File(None),
     texture: UploadFile | None = File(None),
     gallery: list[UploadFile] | None = File(None),
+    texture_faces: list[UploadFile] | None = File(None),
     normal_map: UploadFile | None = File(None),
     roughness_map: UploadFile | None = File(None),
     db: Session = Depends(get_db),
@@ -149,6 +150,8 @@ async def create_product(
         uploads.append(("texture", material))
     if gallery:
         uploads.extend(("gallery", image) for image in gallery)
+    if texture_faces:
+        uploads.extend(("texture_face", image) for image in texture_faces)
     if normal_map is not None:
         uploads.append(("normal", normal_map))
     if roughness_map is not None:
