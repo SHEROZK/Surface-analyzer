@@ -71,4 +71,4 @@ docker-compose.yml
 3. Add AI-assisted room segmentation, occlusion, and object-aware masks.
 4. Complete organization-level authentication, roles, and access controls for each independent installation.
 5. Integrate AI surface suggestions and object-aware masking.
-6. Integrate live camera preview, then billing, embed SDK, and production operations.
+6. Integrate live camera preview, then embed SDK and production operations.
