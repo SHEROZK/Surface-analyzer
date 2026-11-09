@@ -123,14 +123,20 @@ export default function Workspace() {
     canvas.width = room.naturalWidth;
     canvas.height = room.naturalHeight;
     ctx.drawImage(room, 0, 0);
-    if (points.length >= 3) {
+    const surfaces: { mode: "floor" | "wall"; polygon: Point[] }[] = [
+      { mode: "floor", polygon: surfaceOutlines.floor },
+      { mode: "wall", polygon: surfaceOutlines.wall },
+    ];
+    const primaryTexture = textureImageRef.current;
+    const faces = [primaryTexture, ...textureFacesRef.current].filter((image): image is HTMLImageElement => Boolean(image?.complete && image.naturalWidth));
+    for (const surface of surfaces) {
+      const polygon = surface.polygon;
+      if (polygon.length < 3) continue;
       ctx.save();
       ctx.beginPath();
-      points.forEach((point, index) => index === 0 ? ctx.moveTo(point.x * canvas.width, point.y * canvas.height) : ctx.lineTo(point.x * canvas.width, point.y * canvas.height));
+      polygon.forEach((point, index) => index === 0 ? ctx.moveTo(point.x * canvas.width, point.y * canvas.height) : ctx.lineTo(point.x * canvas.width, point.y * canvas.height));
       ctx.closePath();
       ctx.clip();
-      const primaryTexture = textureImageRef.current;
-      const faces = [primaryTexture, ...textureFacesRef.current].filter((image): image is HTMLImageElement => Boolean(image?.complete && image.naturalWidth));
       if (faces.length) {
         const baseWidth = Math.max(28, canvas.width * scale / 2.5);
         const baseHeight = baseWidth * (faces[0].naturalHeight / faces[0].naturalWidth);
@@ -139,75 +145,74 @@ export default function Workspace() {
         const patternCanvas = document.createElement("canvas");
         patternCanvas.width = canvas.width; patternCanvas.height = canvas.height;
         const patternCtx = patternCanvas.getContext("2d");
-        if (!patternCtx) { ctx.restore(); return; }
-        patternCtx.fillStyle = groutColor;
-        patternCtx.fillRect(0, 0, canvas.width, canvas.height);
-        const drawCell = (x:number, y:number, w:number, h:number, seed:number, angle=0) => {
-          const face = faces[Math.abs(seed) % faces.length];
-          patternCtx.save();
-          patternCtx.translate(x + w / 2, y + h / 2);
-          patternCtx.rotate(angle);
-          if (seed % 7 === 0) patternCtx.scale(-1, 1);
-          if (seed % 11 === 0) patternCtx.scale(1, -1);
-          patternCtx.drawImage(face, -w / 2 + gap / 2, -h / 2 + gap / 2, w - gap, h - gap);
-          patternCtx.restore();
-        };
-        if (pattern === "herringbone") {
-          const w = baseWidth * 0.5;
-          const h = baseHeight;
-          const stepX = w + gap;
-          const stepY = h + gap;
-          const rows = Math.ceil(canvas.height / stepY) + 4;
-          const cols = Math.ceil(canvas.width / stepX) + 4;
-          for (let row=-2; row<rows; row++) for (let col=-2; col<cols; col++) {
-            const x = col * stepX * 2 + (row % 2 ? stepX : 0);
-            const y = row * stepY;
-            const seed = (row * 73856093) ^ (col * 19349663);
-            drawCell(x, y, w, h, seed, 0);
-            drawCell(x + w + gap, y + h / 2, w, h, seed + 13, Math.PI / 2);
+        if (patternCtx) {
+          patternCtx.fillStyle = groutColor;
+          patternCtx.fillRect(0, 0, canvas.width, canvas.height);
+          const drawCell = (x:number, y:number, w:number, h:number, seed:number, angle=0) => {
+            const face = faces[Math.abs(seed) % faces.length];
+            patternCtx.save();
+            patternCtx.translate(x + w / 2, y + h / 2);
+            patternCtx.rotate(angle);
+            if (seed % 7 === 0) patternCtx.scale(-1, 1);
+            if (seed % 11 === 0) patternCtx.scale(1, -1);
+            patternCtx.drawImage(face, -w / 2 + gap / 2, -h / 2 + gap / 2, w - gap, h - gap);
+            patternCtx.restore();
+          };
+          if (pattern === "herringbone") {
+            const w = baseWidth * 0.5, h = baseHeight;
+            const stepX = w + gap, stepY = h + gap;
+            const rows = Math.ceil(canvas.height / stepY) + 4;
+            const cols = Math.ceil(canvas.width / stepX) + 4;
+            for (let row=-2; row<rows; row++) for (let col=-2; col<cols; col++) {
+              const x = col * stepX * 2 + (row % 2 ? stepX : 0), y = row * stepY;
+              const seed = (row * 73856093) ^ (col * 19349663);
+              drawCell(x, y, w, h, seed);
+              drawCell(x + w + gap, y + h / 2, w, h, seed + 13, Math.PI / 2);
+            }
+          } else {
+            const diagonal = pattern === "diagonal" ? Math.PI / 4 : 0;
+            const cellW = pattern === "diagonal" ? baseWidth * 1.414 : baseWidth;
+            const cellH = pattern === "diagonal" ? baseHeight * 1.414 : baseHeight;
+            const stepX = cellW + gap, stepY = cellH + gap;
+            const rows = Math.ceil(canvas.height / stepY) + 4;
+            const cols = Math.ceil(canvas.width / stepX) + 4;
+            for (let row=-2; row<rows; row++) for (let col=-2; col<cols; col++) {
+              const offset = pattern === "brick" && row % 2 !== 0 ? stepX / 2 : 0;
+              const seed = (row * 73856093) ^ (col * 19349663);
+              drawCell(col * stepX + offset, row * stepY, cellW, cellH, seed, diagonal);
+            }
           }
-        } else {
-          const diagonal = pattern === "diagonal" ? Math.PI / 4 : 0;
-          const cellW = pattern === "diagonal" ? baseWidth * 1.414 : baseWidth;
-          const cellH = pattern === "diagonal" ? baseHeight * 1.414 : baseHeight;
-          const stepX = cellW + gap;
-          const stepY = cellH + gap;
-          const rows = Math.ceil(canvas.height / stepY) + 4;
-          const cols = Math.ceil(canvas.width / stepX) + 4;
-          for (let row=-2; row<rows; row++) for (let col=-2; col<cols; col++) {
-            const offset = pattern === "brick" && row % 2 !== 0 ? stepX / 2 : 0;
-            const seed = (row * 73856093) ^ (col * 19349663);
-            drawCell(col * stepX + offset, row * stepY, cellW, cellH, seed, diagonal);
+          const quad = floorQuad(polygon);
+          if (quad) {
+            const projected: Quad = quad.map(p => ({x:p.x*canvas.width,y:p.y*canvas.height})) as Quad;
+            drawImageOnQuad(ctx, patternCanvas, projected, canvas.width, canvas.height);
+          } else {
+            ctx.drawImage(patternCanvas, 0, 0);
           }
-        }
-        const quad = floorQuad(points);
-        if (quad) {
-          const projected: Quad = quad.map(p => ({x:p.x*canvas.width,y:p.y*canvas.height})) as Quad;
-          drawImageOnQuad(ctx, patternCanvas, projected, canvas.width, canvas.height);
-        } else {
-          ctx.drawImage(patternCanvas, 0, 0);
         }
       } else {
-        ctx.fillStyle = "rgba(165,176,139,.58)";
+        ctx.fillStyle = surface.mode === "floor" ? "rgba(165,176,139,.58)" : "rgba(120,160,190,.42)";
         ctx.fill();
       }
       ctx.restore();
-      ctx.save();
-      ctx.beginPath();
-      points.forEach((point, index) => index === 0 ? ctx.moveTo(point.x * canvas.width, point.y * canvas.height) : ctx.lineTo(point.x * canvas.width, point.y * canvas.height));
-      ctx.closePath();
-      ctx.strokeStyle = "#d9e3c4";
-      ctx.lineWidth = Math.max(2, canvas.width / 500);
-      ctx.stroke();
-      ctx.restore();
+      if (surface.mode === surfaceMode) {
+        ctx.save();
+        ctx.beginPath();
+        polygon.forEach((point, index) => index === 0 ? ctx.moveTo(point.x * canvas.width, point.y * canvas.height) : ctx.lineTo(point.x * canvas.width, point.y * canvas.height));
+        ctx.closePath();
+        ctx.strokeStyle = surface.mode === "floor" ? "#d9e3c4" : "#a8d8f0";
+        ctx.lineWidth = Math.max(2, canvas.width / 500);
+        ctx.stroke();
+        polygon.forEach(point => {
+          ctx.beginPath();
+          ctx.arc(point.x * canvas.width, point.y * canvas.height, Math.max(4, canvas.width / 180), 0, Math.PI * 2);
+          ctx.fillStyle = surface.mode === "floor" ? "#d9e3c4" : "#a8d8f0";
+          ctx.fill();
+        });
+        ctx.restore();
+      }
     }
-    points.forEach(point => {
-      ctx.beginPath();
-      ctx.arc(point.x * canvas.width, point.y * canvas.height, Math.max(4, canvas.width / 180), 0, Math.PI * 2);
-      ctx.fillStyle = "#d9e3c4";
-      ctx.fill();
-    });
-  }, [points, scale, opacity, pattern, groutWidth, groutColor]);
+  }, [points, surfaceOutlines, surfaceMode, scale, opacity, pattern, groutWidth, groutColor]);
 
   useEffect(() => { redraw(); }, [redraw, roomUrl, selectedProduct]);
 
