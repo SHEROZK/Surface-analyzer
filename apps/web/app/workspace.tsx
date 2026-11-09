@@ -11,6 +11,16 @@ type ProjectDetail = { id: string; name: string; status: string; assets: Asset[]
 type Point = { x: number; y: number };
 type Quad = [Point, Point, Point, Point];
 
+function pointInPolygon(point: Point, polygon: Point[]) {
+  let inside = false;
+  for (let i=0,j=polygon.length-1;i<polygon.length;j=i++) {
+    const a=polygon[i], b=polygon[j];
+    const crosses=((a.y>point.y)!==(b.y>point.y)) && point.x < ((b.x-a.x)*(point.y-a.y))/(b.y-a.y)+a.x;
+    if (crosses) inside=!inside;
+  }
+  return inside;
+}
+
 // Approximate the four floor-plane corners from an automatically detected or
 // manually drawn polygon. The polygon remains the authoritative clipping mask.
 function floorQuad(polygon: Point[]): Quad | null {
@@ -59,6 +69,7 @@ export default function Workspace() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<ProjectDetail | null>(null);
   const [selectedProduct, setSelectedProduct] = useState("");
+  const [surfaceProducts, setSurfaceProducts] = useState<{floor:string;wall:string}>({floor:"",wall:""});
   const [projectName, setProjectName] = useState("");
   const [productName, setProductName] = useState("");
   const [sku, setSku] = useState("");
@@ -80,8 +91,7 @@ export default function Workspace() {
   const [groutColor, setGroutColor] = useState("#aaa69c");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const roomImageRef = useRef<HTMLImageElement | null>(null);
-  const textureImageRef = useRef<HTMLImageElement | null>(null);
-  const textureFacesRef = useRef<HTMLImageElement[]>([]);
+  const productTexturesRef = useRef<Record<string,{primary:HTMLImageElement|null;faces:HTMLImageElement[]}>>({});
   const lastAutoDetectionRef = useRef("");
 
   const refresh = useCallback(async () => {
@@ -127,10 +137,11 @@ export default function Workspace() {
       { mode: "floor", polygon: surfaceOutlines.floor },
       { mode: "wall", polygon: surfaceOutlines.wall },
     ];
-    const primaryTexture = textureImageRef.current;
-    const faces = [primaryTexture, ...textureFacesRef.current].filter((image): image is HTMLImageElement => Boolean(image?.complete && image.naturalWidth));
     for (const surface of surfaces) {
       const polygon = surface.polygon;
+      const productId = surfaceProducts[surface.mode] || selectedProduct;
+      const textureSet = productTexturesRef.current[productId];
+      const faces = [textureSet?.primary, ...(textureSet?.faces || [])].filter((image): image is HTMLImageElement => Boolean(image?.complete && image.naturalWidth));
       if (polygon.length < 3) continue;
       ctx.save();
       ctx.beginPath();
@@ -212,7 +223,7 @@ export default function Workspace() {
         ctx.restore();
       }
     }
-  }, [points, surfaceOutlines, surfaceMode, scale, opacity, pattern, groutWidth, groutColor]);
+  }, [points, surfaceOutlines, surfaceMode, surfaceProducts, selectedProduct, scale, opacity, pattern, groutWidth, groutColor]);
 
   useEffect(() => { redraw(); }, [redraw, roomUrl, selectedProduct]);
 
@@ -221,22 +232,16 @@ export default function Workspace() {
     image.onload = () => { roomImageRef.current = image; redraw(); };
     image.src = API + url;
   }
-  function loadTexture(url?: string | null, faces: string[] = []) {
-    textureImageRef.current = null;
-    textureFacesRef.current = [];
-    if (!url) { redraw(); return; }
-    const primary = new Image();
-    primary.onload = () => { textureImageRef.current = primary; redraw(); };
-    primary.src = API + url;
-    textureFacesRef.current = faces.map(faceUrl => {
-      const image = new Image();
-      image.onload = () => redraw();
-      image.src = API + faceUrl;
-      return image;
-    });
-  }
   useEffect(() => { if (roomUrl) loadRoom(roomUrl); else { roomImageRef.current = null; redraw(); } }, [roomUrl]);
-  useEffect(() => { loadTexture(activeProduct?.material_url, activeProduct?.assets?.filter(asset => asset.role === "texture_face").map(asset => asset.url) || []); }, [activeProduct?.id, activeProduct?.material_url]);
+  useEffect(() => {
+    for (const product of products) {
+      const urls = [product.material_url, ...(product.assets?.filter(asset => asset.role === "texture_face").map(asset => asset.url) || [])].filter((url): url is string => Boolean(url));
+      if (!urls.length || productTexturesRef.current[product.id]) continue;
+      const images = urls.map(url => { const image = new Image(); image.onload = () => redraw(); image.src = API + url; return image; });
+      productTexturesRef.current[product.id] = {primary:images[0] || null,faces:images.slice(1)};
+    }
+    redraw();
+  }, [products, redraw]);
 
 
   async function autoDetectFloor() {
@@ -306,6 +311,26 @@ export default function Workspace() {
     finally { setBusy(false); }
   }
 
+  function assignProductToSurface(productId: string, mode: "floor" | "wall") {
+    setSurfaceProducts(current => ({...current,[mode]:productId}));
+    setSelectedProduct(productId);
+    setMessage("Material assigned to the " + mode + ". Drag another product onto a surface to replace it.");
+  }
+
+  function dropProduct(event: React.DragEvent<HTMLCanvasElement>) {
+    event.preventDefault();
+    const productId = event.dataTransfer.getData("application/surface-product");
+    if (!productId) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const point = {x:(event.clientX-rect.left)/rect.width,y:(event.clientY-rect.top)/rect.height};
+    const floorHit = surfaceOutlines.floor.length>=3 && pointInPolygon(point,surfaceOutlines.floor);
+    const wallHit = surfaceOutlines.wall.length>=3 && pointInPolygon(point,surfaceOutlines.wall);
+    if (floorHit && wallHit) { assignProductToSurface(productId,surfaceMode); return; }
+    if (floorHit) { assignProductToSurface(productId,"floor"); return; }
+    if (wallHit) { assignProductToSurface(productId,"wall"); return; }
+    setMessage("Drop the material inside a detected floor or wall outline. Detect or draw that surface first.");
+  }
+
   function addPoint(event: React.MouseEvent<HTMLCanvasElement>) {
     if (!roomImageRef.current) return;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -325,14 +350,14 @@ export default function Workspace() {
           <div className="project-list">{projects.map(project=><button key={project.id} className={"project-item "+(selectedProject?.id===project.id?"active":"")} onClick={()=>void loadProject(project.id)}><span className="project-icon">◫</span><span>{project.name}<small>{project.status}</small></span><span>↗</span></button>)}{projects.length===0&&<p className="empty-note">Your projects will appear here.</p>}</div>
         </section>
         <section className="panel"><div className="panel-title"><span>02 / MATERIAL LIBRARY</span><span>{products.length} PRODUCTS</span></div>
-          <div className="product-list">{products.map(product=><button key={product.id} className={"product-item "+(selectedProduct===product.id?"active":"")} onClick={()=>setSelectedProduct(product.id)}><span className="swatch">{product.material_url?<img src={API+product.material_url} alt=""/>:<span>▧</span>}</span><span>{product.name}<small>{[product.category?.replaceAll("-"," "),product.brand,product.collection,product.width_mm&&product.height_mm?product.width_mm+" × "+product.height_mm+" mm":null,product.finish].filter(Boolean).join(" · ")||"Surface material"}</small></span></button>)}</div>
+          <div className="product-list">{products.map(product=><button key={product.id} draggable onDragStart={event=>event.dataTransfer.setData("application/surface-product",product.id)} className={"product-item "+(selectedProduct===product.id?"active":"")} onClick={()=>assignProductToSurface(product.id,surfaceMode)} title="Click to apply to selected surface, or drag onto the floor or wall"><span className="swatch">{product.material_url?<img src={API+product.material_url} alt=""/>:<span>▧</span>}</span><span>{product.name}<small>{[product.category?.replaceAll("-"," "),product.brand,product.collection,product.width_mm&&product.height_mm?product.width_mm+" × "+product.height_mm+" mm":null,product.finish].filter(Boolean).join(" · ")||"Surface material"}</small></span></button>)}</div>
           <details className="add-material"><summary>＋ Add a surface product</summary><form onSubmit={createProduct} className="stack-form"><input name="name" placeholder="Material name" required/><input name="sku" placeholder="SKU / product code (optional)"/><select name="category" defaultValue="tile"><option value="tile">Tile / Porcelain</option><option value="natural-stone">Natural stone / Marble</option><option value="wood-flooring">Wood / Flooring</option><option value="wallpaper">Wallpaper</option><option value="countertop">Countertop / Slab</option><option value="paint">Paint / Coating</option><option value="panel">Wall / Decorative panel</option><option value="paver">Outdoor paver</option><option value="other">Other surface</option></select><input name="brand" placeholder="Brand / manufacturer (optional)"/><input name="collection" placeholder="Collection / range (optional)"/><div className="two-inputs"><input name="width_mm" type="number" min="1" placeholder="Width mm"/><input name="height_mm" type="number" min="1" placeholder="Height mm"/></div><select name="finish" defaultValue="Matt"><option>Matt</option><option>Polished</option><option>Gloss</option><option>Textured</option><option>Stone</option><option>Wood effect</option></select><label className="file-label">Seamless texture / main material image<input name="texture" type="file" accept="image/png,image/jpeg,image/webp"/></label><label className="file-label">Texture face variations (multiple)<input name="texture_faces" type="file" accept="image/png,image/jpeg,image/webp" multiple/></label><label className="file-label">Product gallery images (multiple)<input name="gallery" type="file" accept="image/png,image/jpeg,image/webp" multiple/></label><label className="file-label">Normal map (optional)<input name="normal_map" type="file" accept="image/png,image/jpeg,image/webp"/></label><label className="file-label">Roughness map (optional)<input name="roughness_map" type="file" accept="image/png,image/jpeg,image/webp"/></label><button className="dark-button" disabled={busy}>Save product</button></form></details>
         </section>
       </aside>
       <section className="visualizer-panel"><div className="visualizer-top"><div><div className="panel-title">03 / PHOTO VISUALIZER</div><h2>{selectedProject?.name || "Choose a project"}</h2></div><span className="visualizer-status">{roomUrl?"ROOM LOADED":"AWAITING PHOTO"}</span></div>
         {!selectedProject ? <div className="visualizer-empty"><div className="empty-symbol">＋</div><h3>Start with a project</h3><p>Create a project on the left, then upload a room photo to begin.</p></div> :
-        <><div className="canvas-wrap">{roomUrl?<canvas ref={canvasRef} onClick={addPoint} aria-label="Room photo. Click to outline the surface to visualize."/>:<div className="upload-empty"><div className="empty-symbol">↑</div><h3>Upload a room photograph</h3><p>JPG, PNG or WebP · up to 15 MB</p><label className="dark-button">Choose room photo<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div>}</div>
-        {roomUrl&&<div className="visualizer-controls"><div className="control-row"><span>Surface outline</span><span>{points.length<3?"Not detected":points.length+" boundary points"} · Floor: {surfaceOutlines.floor.length>=3?"saved":"—"} · Wall: {surfaceOutlines.wall.length>=3?"saved":"—"}{detectionConfidence!==null?" · "+Math.round(detectionConfidence*100)+"% heuristic score":""}</span></div>{detectionWarnings.length>0&&<ul className="helper">{detectionWarnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>}<div className="range-row"><label>Surface type <select value={surfaceMode} onChange={e=>{const nextMode=e.target.value as "floor" | "wall";setSurfaceOutlines(current=>({...current,[surfaceMode]:points}));setPoints(surfaceOutlines[nextMode]);setSurfaceMode(nextMode);setDetectionConfidence(null);setDetectionWarnings([]);}}><option value="floor">Floor</option><option value="wall">Wall</option></select></label></div><div className="control-actions"><button disabled={detecting||busy} onClick={()=>void autoDetectFloor()}>{detecting?"Detecting…": "✦ Auto-detect " + (surfaceMode === "floor" ? "floor" : "wall")}</button><button onClick={()=>{setPoints([]);setSurfaceOutlines(current=>({...current,[surfaceMode]:[]}));setDetectionConfidence(null);setDetectionWarnings([]);}}>Clear outline</button><button onClick={()=>setPoints(current=>{const next=current.slice(0,-1);setSurfaceOutlines(saved=>({...saved,[surfaceMode]:next}));return next;})}>Undo point</button><label className="file-replace">Replace photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div><div className="range-row"><label>Pattern scale <input type="range" min=".15" max=".9" step=".01" value={scale} onChange={e=>setScale(Number(e.target.value))}/></label><label>Opacity <input type="range" min=".2" max="1" step=".01" value={opacity} onChange={e=>setOpacity(Number(e.target.value))}/></label></div><div className="range-row"><label>Tile layout <select value={pattern} onChange={e=>setPattern(e.target.value)}><option value="grid">Straight / grid</option><option value="brick">Brick / offset</option><option value="diagonal">Diagonal</option><option value="herringbone">Herringbone</option></select></label><label>Grout width <input type="range" min=".004" max=".04" step=".001" value={groutWidth} onChange={e=>setGroutWidth(Number(e.target.value))}/></label></div><div className="range-row"><label>Grout colour <input type="color" value={groutColor} onChange={e=>setGroutColor(e.target.value)}/></label></div><p className="helper-text">Choose Floor or Wall, then use Auto-detect to propose the visible surface boundary from the room photo. Review the result: click the image to add boundary points, use Undo point to refine it, or Clear outline to start again. Detection may need correction around rugs, furniture, reflections or unusual camera angles.</p></div>}</>}
+        <><div className="canvas-wrap">{roomUrl?<canvas ref={canvasRef} onClick={addPoint} onDragOver={event=>event.preventDefault()} onDrop={dropProduct} aria-label="Room photo. Drag a material onto the outlined floor or wall to apply it."/>:<div className="upload-empty"><div className="empty-symbol">↑</div><h3>Upload a room photograph</h3><p>JPG, PNG or WebP · up to 15 MB</p><label className="dark-button">Choose room photo<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div>}</div>
+        {roomUrl&&<div className="visualizer-controls"><div className="control-row"><span>Surface outline</span><span>{points.length<3?"Not detected":points.length+" boundary points"} · Floor: {surfaceOutlines.floor.length>=3?"saved":"—"} · Wall: {surfaceOutlines.wall.length>=3?"saved":"—"}{detectionConfidence!==null?" · "+Math.round(detectionConfidence*100)+"% heuristic score":""}</span></div><div className="control-row"><span>Applied materials</span><span>Floor: {products.find(product=>product.id===(surfaceProducts.floor||selectedProduct))?.name||"None"} · Wall: {products.find(product=>product.id===(surfaceProducts.wall||selectedProduct))?.name||"None"}</span></div>{detectionWarnings.length>0&&<ul className="helper">{detectionWarnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>}<div className="range-row"><label>Surface type <select value={surfaceMode} onChange={e=>{const nextMode=e.target.value as "floor" | "wall";setSurfaceOutlines(current=>({...current,[surfaceMode]:points}));setPoints(surfaceOutlines[nextMode]);setSurfaceMode(nextMode);setDetectionConfidence(null);setDetectionWarnings([]);}}><option value="floor">Floor</option><option value="wall">Wall</option></select></label></div><div className="control-actions"><button disabled={detecting||busy} onClick={()=>void autoDetectFloor()}>{detecting?"Detecting…": "✦ Auto-detect " + (surfaceMode === "floor" ? "floor" : "wall")}</button><button onClick={()=>{setPoints([]);setSurfaceOutlines(current=>({...current,[surfaceMode]:[]}));setDetectionConfidence(null);setDetectionWarnings([]);}}>Clear outline</button><button onClick={()=>setPoints(current=>{const next=current.slice(0,-1);setSurfaceOutlines(saved=>({...saved,[surfaceMode]:next}));return next;})}>Undo point</button><label className="file-replace">Replace photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div><div className="range-row"><label>Pattern scale <input type="range" min=".15" max=".9" step=".01" value={scale} onChange={e=>setScale(Number(e.target.value))}/></label><label>Opacity <input type="range" min=".2" max="1" step=".01" value={opacity} onChange={e=>setOpacity(Number(e.target.value))}/></label></div><div className="range-row"><label>Tile layout <select value={pattern} onChange={e=>setPattern(e.target.value)}><option value="grid">Straight / grid</option><option value="brick">Brick / offset</option><option value="diagonal">Diagonal</option><option value="herringbone">Herringbone</option></select></label><label>Grout width <input type="range" min=".004" max=".04" step=".001" value={groutWidth} onChange={e=>setGroutWidth(Number(e.target.value))}/></label></div><div className="range-row"><label>Grout colour <input type="color" value={groutColor} onChange={e=>setGroutColor(e.target.value)}/></label></div><p className="helper-text">Choose Floor or Wall, then use Auto-detect to propose the visible surface boundary from the room photo. Review the result: click the image to add boundary points, use Undo point to refine it, or Clear outline to start again. Detection may need correction around rugs, furniture, reflections or unusual camera angles.</p></div>}</>}
       </section>
     </div>
     <footer className="studio-footer"><span>© 2026 SURFACE ANALYZER</span><span>PHOTO WORKFLOW MVP · MULTI-MATERIAL CATALOG</span></footer>
