@@ -156,6 +156,7 @@ def _model_proposal(image: np.ndarray, mode: str, provider) -> dict:
         raise SurfaceDetectionError("Segmentation provider returned invalid probability values.")
 
     occlusions = []
+    sam2_message = None
     if scene is not None:
         class_map = scene["class_map"]
         confidence_map = scene["confidence_map"]
@@ -216,7 +217,7 @@ def _model_proposal(image: np.ndarray, mode: str, provider) -> dict:
         warnings.append("This checkpoint returns a binary surface mask; separate occlusion masks are unavailable.")
     elif occlusions:
         warnings.append(f"Detected {len(occlusions)} potential occluding object regions. Review their masks before rendering.")
-        if "sam2_message" in locals() and sam2_message:
+        if sam2_message:
             warnings.append(sam2_message)
     return {
         "points": points, "confidence": round(float(np.mean(probabilities[component > 0])), 2),
