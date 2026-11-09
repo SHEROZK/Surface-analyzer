@@ -165,9 +165,9 @@ async def capabilities():
 
 
 @app.get("/api/v1/products", tags=["catalog"])
-def list_products(db: Session = Depends(get_db)):
-    tenant = get_default_tenant(db)
-    products = db.scalars(select(TileProduct).where(TileProduct.tenant_id == tenant.id).order_by(TileProduct.created_at.desc())).all()
+def list_products(current_user: User = Depends(get_current_user)):
+    tenant_id = current_user.tenant_id
+    products = db.scalars(select(TileProduct).where(TileProduct.tenant_id == tenant_id).order_by(TileProduct.created_at.desc())).all()
     return [serialize_product(p) for p in products]
 
 
@@ -203,6 +203,7 @@ async def create_product(
     texture_faces: list[UploadFile] | None = File(None),
     normal_map: UploadFile | None = File(None),
     roughness_map: UploadFile | None = File(None),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     name = name.strip()
@@ -210,13 +211,13 @@ async def create_product(
         raise HTTPException(status_code=422, detail="Product name is required.")
     if width_mm is not None and width_mm <= 0 or height_mm is not None and height_mm <= 0:
         raise HTTPException(status_code=422, detail="Tile dimensions must be positive.")
-    tenant = get_default_tenant(db)
+    tenant_id = current_user.tenant_id
     allowed_categories = {"tile", "natural-stone", "wood-flooring", "wallpaper", "countertop", "paint", "panel", "paver", "other"}
     category = category.strip().lower()
     if category not in allowed_categories:
         raise HTTPException(status_code=422, detail="Unsupported material category.")
     product = TileProduct(
-        tenant_id=tenant.id, name=name, sku=sku or None, description=description or None,
+        tenant_id=tenant_id, name=name, sku=sku or None, description=description or None,
         category=category, brand=brand or None, collection=collection or None,
         width_mm=width_mm, height_mm=height_mm, finish=finish or None,
     )
@@ -250,9 +251,8 @@ async def create_product(
 
 
 @app.delete("/api/v1/products/{product_id}", tags=["catalog"])
-def delete_product(product_id: uuid.UUID, db: Session = Depends(get_db)):
-    tenant = get_default_tenant(db)
-    product = db.scalar(select(TileProduct).where(TileProduct.id == product_id, TileProduct.tenant_id == tenant.id))
+def delete_product(product_id: uuid.UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    product = db.scalar(select(TileProduct).where(TileProduct.id == product_id, TileProduct.tenant_id == current_user.tenant_id))
     if product is None:
         raise HTTPException(status_code=404, detail="Tile product not found.")
     db.delete(product)
@@ -261,9 +261,8 @@ def delete_product(product_id: uuid.UUID, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/projects", tags=["projects"])
-def list_projects(db: Session = Depends(get_db)):
-    tenant = get_default_tenant(db)
-    projects = db.scalars(select(Project).where(Project.tenant_id == tenant.id).order_by(Project.created_at.desc())).all()
+def list_projects(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    projects = db.scalars(select(Project).where(Project.tenant_id == current_user.tenant_id).order_by(Project.created_at.desc())).all()
     return [{
         "id": str(p.id), "name": p.name, "status": p.status,
         "room_image_url": next((f"/uploads/{a.storage_key}" for a in p.assets if a.asset_type == "room"), None),
@@ -272,12 +271,11 @@ def list_projects(db: Session = Depends(get_db)):
 
 
 @app.post("/api/v1/projects", tags=["projects"])
-def create_project(name: str = Form(...), db: Session = Depends(get_db)):
+def create_project(name: str = Form(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)): 
     name = name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="Project name is required.")
-    tenant = get_default_tenant(db)
-    project = Project(tenant_id=tenant.id, name=name)
+    project = Project(tenant_id=current_user.tenant_id, created_by_id=current_user.id, name=name)
     db.add(project)
     db.commit()
     db.refresh(project)
@@ -285,9 +283,8 @@ def create_project(name: str = Form(...), db: Session = Depends(get_db)):
 
 
 @app.post("/api/v1/projects/{project_id}/room-image", tags=["projects"])
-async def upload_room_image(project_id: uuid.UUID, image: UploadFile = File(...), db: Session = Depends(get_db)):
-    tenant = get_default_tenant(db)
-    project = db.scalar(select(Project).where(Project.id == project_id, Project.tenant_id == tenant.id))
+async def upload_room_image(project_id: uuid.UUID, image: UploadFile = File(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    project = db.scalar(select(Project).where(Project.id == project_id, Project.tenant_id == current_user.tenant_id))
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found.")
     key, size = await save_image(image)
@@ -299,12 +296,11 @@ async def upload_room_image(project_id: uuid.UUID, image: UploadFile = File(...)
 
 
 @app.post("/api/v1/projects/{project_id}/detect-surface", tags=["surface-analysis"])
-def detect_surface(project_id: uuid.UUID, mode: str = "floor", db: Session = Depends(get_db)):
+def detect_surface(project_id: uuid.UUID, mode: str = "floor", current_user: User = Depends(get_current_user), db: Session = Depends(get_db)): 
     """Return an editable floor or wall boundary proposal in normalized image coordinates."""
     if mode not in {"floor", "wall"}:
         raise HTTPException(status_code=422, detail="Mode must be floor or wall.")
-    tenant = get_default_tenant(db)
-    project = db.scalar(select(Project).where(Project.id == project_id, Project.tenant_id == tenant.id))
+    project = db.scalar(select(Project).where(Project.id == project_id, Project.tenant_id == current_user.tenant_id))
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found.")
     room_asset = db.scalar(select(ProjectAsset).where(
@@ -334,7 +330,7 @@ def detect_surface(project_id: uuid.UUID, mode: str = "floor", db: Session = Dep
 
 
 @app.get("/api/v1/projects/{project_id}", tags=["projects"])
-def get_project(project_id: uuid.UUID, db: Session = Depends(get_db)):
+def get_project(project_id: uuid.UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)): 
     tenant = get_default_tenant(db)
     project = db.scalar(select(Project).where(Project.id == project_id, Project.tenant_id == tenant.id))
     if project is None:
