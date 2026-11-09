@@ -2,7 +2,7 @@
 
 ## Product ambition
 
-Build an independent, API-first surface visualization SaaS that can compete with established room visualizers while serving the full commercial workflow for manufacturers, distributors, retailers, showrooms, and design professionals.
+Build an independent, self-hosted surface visualization software product that businesses install and operate on their own infrastructure. It should compete with established room visualizers while serving manufacturers, distributors, retailers, showrooms, and design professionals.
 
 The benchmark is the customer journey and feature quality of Roomvo, not its implementation or proprietary assets. Surface Analyzer must use its own UX, data model, rendering pipeline, and original code.
 
@@ -26,7 +26,7 @@ Public Roomvo materials describe photo upload and sample rooms, searchable produ
 - **Rendering quality:** deterministic perspective mapping, surface segmentation with human correction, tile/board layout geometry, grout/joints, lighting and shadow preservation, edge-aware occlusion, multi-surface editing, and reproducible project settings.
 - **AI assistance:** propose floor/wall/countertop masks, detect boundaries and obstructions, infer camera geometry, classify material suitability, and flag poor source assets. AI suggestions remain editable and confidence-scored.
 - **Sales workflow:** saved projects, side-by-side comparisons, share links, quote/sample requests, lead inbox, showroom assignment, product availability, and analytics from visualization to conversion.
-- **Deployment flexibility:** hosted SaaS and self-hosted enterprise deployment, tenant branding, custom domains, embed SDK, QR/kiosk mode, webhooks, and API access.
+- **Deployment and integration:** customer-controlled on-premises or private-cloud installation, customer branding, custom domains, embed SDK, QR/kiosk mode, webhooks, and API access. The software must remain fully usable inside the customer's own environment.
 
 ## Product areas
 
@@ -58,7 +58,7 @@ Asset roles must be explicit. A marketing photograph must never be assumed to be
 
 ### C. Sales and business platform
 
-- Tenant dashboard, roles and permissions, brand settings, custom domain.
+- Organization dashboard, user roles and permissions, brand settings, custom domain.
 - Lead inbox and project/customer association.
 - Sample, quote, appointment, and store-locator CTAs.
 - Product-level QR codes and kiosk mode.
@@ -81,7 +81,7 @@ Generative image models may be offered as an optional enhancement, never as the 
 
 ## Core domain entities
 
-- Tenant, User, Role, Permission, APIKey, BrandSettings
+- Organization, User, Role, Permission, APIKey, BrandSettings
 - Catalog, Category, Brand, Manufacturer, Collection, Product, ProductVariant
 - ProductAsset, MaterialProfile, MaterialMap, TextureFace, InstallationPattern, GroutProfile
 - Project, ProjectMember, RoomImage, Scene, Surface, SurfaceGeometry, RenderJob, RenderOutput
@@ -89,7 +89,7 @@ Generative image models may be offered as an optional enhancement, never as the 
 - Lead, SampleRequest, QuoteRequest, Appointment, Store
 - Embed, Domain, Webhook, Integration, UsageEvent, Subscription, AuditEvent
 
-All tenant-owned records require tenant scope and enforceable isolation. Product assets have explicit asset type, dimensions, MIME, checksum, and storage lifecycle.
+All customer data belongs to the locally installed organization and is isolated within that installation. A deployment must not require a shared vendor-hosted multi-tenant control plane. Product assets have explicit asset type, dimensions, MIME, checksum, and storage lifecycle.
 
 ## Delivery roadmap and acceptance gates
 
@@ -140,15 +140,15 @@ All tenant-owned records require tenant scope and enforceable isolation. Product
 - Embed SDK, API keys, webhooks, analytics and attribution.
 - Tenant branding, custom domains, role management.
 
-**Gate:** a retailer can integrate the visualizer into a website and trace a lead from product view to request.
+**Gate:** a retailer can install the software on its own infrastructure, integrate the visualizer into its website, and trace a lead from product view to request.
 
 ### Phase 6 — Enterprise and scale
 - Supplier catalog feeds, ERP/PIM/DAM integrations.
-- Billing, usage metering, plans, quotas.
-- Self-hosted deployment hardening, backups, observability, security testing.
+- Installation health, optional license validation, backups, observability, and operational administration.
+- Installer and upgrade reliability, backups and restore, observability, security testing, and offline-capable operation where practical.
 - Performance budgets and asynchronous render workers.
 
-**Gate:** production deployment passes security, tenant-isolation, backup/restore, load, and operational-readiness checks.
+**Gate:** customer installation passes security, organization-level access control, backup/restore, load, upgrade, and operational-readiness checks.
 
 ## Immediate engineering priorities
 
