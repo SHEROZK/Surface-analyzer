@@ -55,7 +55,7 @@ class Sam2OcclusionRefiner:
                 continue
             best_index = int(np.argmax(scores))
             binary = np.asarray(masks[best_index], dtype=np.uint8)
-            count, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
+            count, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
             if count <= 1:
                 refined.append(proposal)
                 continue
