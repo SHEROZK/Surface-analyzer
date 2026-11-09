@@ -34,7 +34,7 @@ services:
       DATABASE_URL: postgresql+psycopg://surface:surface_dev_password@postgres:5432/surface_analyzer
       REDIS_URL: redis://redis:6379/0
       APP_ENV: development
-      CORS_ORIGINS: http://localhost:3000
+      CORS_ORIGINS: http://localhost:3000\n      UPLOAD_DIR: /data/uploads
     ports: ["8000:8000"]
     depends_on:
       postgres: { condition: service_healthy }
