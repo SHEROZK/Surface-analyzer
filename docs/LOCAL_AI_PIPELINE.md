@@ -25,7 +25,7 @@ Surface Analyzer includes an optional, customer-hosted monocular depth inference
 3. Set `HF_HOME` to a customer-controlled persistent directory.
 4. Call authenticated `POST /api/v1/projects/{project_id}/analyze-depth`.
 
-The Studio button displays the returned depth map. The Docker image currently auto-selects CUDA only if the container runtime exposes an NVIDIA CUDA device and the installed PyTorch build supports it; otherwise it uses CPU.
+The Studio button displays the returned depth map. For Docker Desktop with NVIDIA GPU passthrough configured, use the optional override: `docker compose -f docker-compose.production.yml -f docker-compose.gpu.yml build api` and `docker compose -f docker-compose.production.yml -f docker-compose.gpu.yml up -d api`. The host must have a compatible NVIDIA driver and Docker GPU support; the PyTorch build inside the container must include CUDA support. Without all three, the model uses CPU. GPU passthrough on Windows Docker Desktop depends on the WSL2 and driver setup and has not yet been verified on every Windows configuration.
 
 The response contains a normalized grayscale depth map as a PNG data URL, dimensions, device, and model identifier.
 
