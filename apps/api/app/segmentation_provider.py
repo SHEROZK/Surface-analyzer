@@ -1,19 +1,47 @@
-"""Optional local semantic segmentation providers.
+"""Local semantic segmentation adapters for self-hosted room analysis.
 
-The Transformers provider uses a customer-selected semantic segmentation checkpoint.
-The checkpoint must expose ADE20K-compatible floor/wall labels (or equivalent
-labels configured by the model author). Model weights remain in the customer's
-Hugging Face cache; no room image is sent to a hosted inference API.
+No room image is sent to a hosted inference service. Checkpoint and training-data
+licenses must be reviewed independently before commercial deployment.
 """
 from __future__ import annotations
 
 import os
+import re
 
 import cv2
 import numpy as np
 
 
+DEFAULT_OCCLUSION_LABELS = {
+    "bed", "cabinet", "curtain", "chair", "sofa", "shelf", "armchair",
+    "seat", "desk", "wardrobe", "lamp", "bathtub", "cushion", "box",
+    "chest of drawers", "refrigerator", "pool table", "pillow", "screen door",
+    "table", "plant", "person", "painting", "mirror", "windowpane", "door",
+    "sink", "fireplace", "counter", "monitor", "vase", "shower", "radiator",
+    "rug", "carpet",
+}
+
+
+def normalize_label(value: str) -> str:
+    return re.sub(r"\\s+", " ", str(value).strip().lower().replace("_", " ").replace("-", " "))
+
+
+def _label_id_for_mode(id2label: dict, mode: str) -> int:
+    if mode not in {"floor", "wall"}:
+        raise ValueError("Mode must be floor or wall.")
+    wanted = {"floor": {"floor", "flooring"}, "wall": {"wall", "walls"}}[mode]
+    for raw_id, raw_label in id2label.items():
+        if normalize_label(raw_label) in wanted:
+            return int(raw_id)
+    raise RuntimeError(
+        f"The selected segmentation checkpoint has no {mode!r} class in id2label. "
+        "Choose a checkpoint trained with floor and wall semantic classes."
+    )
+
+
 class OnnxSurfaceSegmentationProvider:
+    """Legacy binary ONNX adapter (NCHW RGB plus a floor/wall mode plane)."""
+
     name = "onnx-room-segmentation"
 
     def __init__(self, model_path: str):
@@ -48,21 +76,8 @@ class OnnxSurfaceSegmentationProvider:
         return probabilities
 
 
-def _label_id_for_mode(id2label: dict, mode: str) -> int:
-    """Resolve a class index by label text instead of assuming model-specific IDs."""
-    wanted = {"floor": {"floor", "flooring"}, "wall": {"wall", "walls"}}
-    for raw_id, raw_label in id2label.items():
-        label = str(raw_label).strip().lower().replace("_", " ").replace("-", " ")
-        if label in wanted[mode]:
-            return int(raw_id)
-    raise RuntimeError(
-        f"The selected segmentation checkpoint has no {mode!r} class in id2label. "
-        "Choose a checkpoint trained with floor and wall semantic classes."
-    )
-
-
 class TransformersSemanticSegmentationProvider:
-    """Run a local Hugging Face semantic segmentation model and return class probabilities."""
+    """Local Hugging Face semantic model exposing floor/wall and object classes."""
 
     name = "transformers-semantic-segmentation"
 
@@ -79,15 +94,14 @@ class TransformersSemanticSegmentationProvider:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.processor = AutoImageProcessor.from_pretrained(model_id)
         self.model = AutoModelForSemanticSegmentation.from_pretrained(model_id).eval().to(self.device)
-        self.id2label = self.model.config.id2label
+        self.id2label = {int(k): v for k, v in self.model.config.id2label.items()}
+        self.class_ids = {normalize_label(label): class_id for class_id, label in self.id2label.items()}
         if self.device == "cuda":
             self.model = self.model.half()
 
-    def predict(self, image: np.ndarray, mode: str) -> np.ndarray:
+    def predict_scene(self, image: np.ndarray) -> dict:
         from PIL import Image
 
-        if mode not in {"floor", "wall"}:
-            raise ValueError("Mode must be floor or wall.")
         if image is None or image.ndim != 3 or image.shape[2] != 3:
             raise ValueError("Expected a decoded three-channel room image.")
         height, width = image.shape[:2]
@@ -97,17 +111,28 @@ class TransformersSemanticSegmentationProvider:
         if self.device == "cuda":
             inputs = {key: value.half() if value.is_floating_point() else value for key, value in inputs.items()}
 
-        class_id = _label_id_for_mode(self.id2label, mode)
         with self.torch.inference_mode():
             logits = self.model(**inputs).logits
             logits = self.torch.nn.functional.interpolate(
-                logits, size=(height, width), mode="bilinear", align_corners=False
+                logits.float(), size=(height, width), mode="bilinear", align_corners=False
             )
-            probabilities = self.torch.softmax(logits.float(), dim=1)[0, class_id]
-        result = probabilities.cpu().numpy().astype(np.float32)
-        if result.shape != (height, width) or not np.isfinite(result).all():
-            raise RuntimeError("Semantic segmentation model returned an invalid probability map.")
+            probabilities = self.torch.softmax(logits, dim=1)[0]
+            confidence, class_map = probabilities.max(dim=0)
+
+        result = {
+            "class_map": class_map.cpu().numpy().astype(np.int32),
+            "confidence_map": confidence.cpu().numpy().astype(np.float32),
+            "id2label": self.id2label,
+            "probabilities": probabilities.cpu().numpy().astype(np.float32),
+        }
+        if result["class_map"].shape != (height, width) or not np.isfinite(result["confidence_map"]).all():
+            raise RuntimeError("Semantic segmentation model returned an invalid scene map.")
         return result
+
+    def predict(self, image: np.ndarray, mode: str) -> np.ndarray:
+        scene = self.predict_scene(image)
+        class_id = _label_id_for_mode(scene["id2label"], mode)
+        return scene["probabilities"][class_id]
 
 
 def get_segmentation_provider():
@@ -120,6 +145,5 @@ def get_segmentation_provider():
         if not model_path:
             raise RuntimeError("Set SURFACE_SEGMENTATION_MODEL to the ONNX model file path.")
         return OnnxSurfaceSegmentationProvider(model_path)
-    # Backward compatibility: a configured ONNX path continues to enable ONNX.
     model_path = os.getenv("SURFACE_SEGMENTATION_MODEL", "").strip()
     return OnnxSurfaceSegmentationProvider(model_path) if model_path else None
