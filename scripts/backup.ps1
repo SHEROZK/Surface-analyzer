@@ -16,8 +16,11 @@ try {
   docker compose @Compose stop api
   if ($LASTEXITCODE -ne 0) { throw "Could not stop API before backup." }
 
-  docker compose @Compose exec -T postgres sh -c 'pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"' | Set-Content -Encoding Byte -Path (Join-Path $target "database.dump")
+  docker compose @Compose exec -T postgres sh -c 'pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB" > /tmp/surface-analyzer.dump'
   if ($LASTEXITCODE -ne 0) { throw "Database backup failed." }
+  docker compose @Compose cp postgres:/tmp/surface-analyzer.dump (Join-Path $target "database.dump")
+  if ($LASTEXITCODE -ne 0) { throw "Could not copy database backup to the host." }
+  docker compose @Compose exec -T postgres rm -f /tmp/surface-analyzer.dump
 
   docker compose @Compose cp api:/data/uploads (Join-Path $target "uploads")
   if ($LASTEXITCODE -ne 0) { throw "Uploads backup failed." }
