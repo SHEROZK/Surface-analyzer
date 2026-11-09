@@ -28,6 +28,12 @@ The intended production path is a model trained or fine-tuned on a properly lice
 
 The provider resolves class IDs from model metadata; it does not hardcode ADE20K class indexes. The endpoint returns the main target polygon plus an occlusions array. Each occlusion includes a class label, normalized polygon, normalized bounding box, confidence and area ratio. The target proposal excludes pixels assigned to configured occlusion classes.
 
+### Optional SAM 2 object-boundary refinement
+
+The semantic model identifies object classes and proposes object boxes. For higher-quality boundaries, install `apps/api/requirements-sam2.txt`, then set `SURFACE_SAM2_CONFIG` and `SURFACE_SAM2_CHECKPOINT` to locally stored SAM 2 configuration and checkpoint files. SAM 2 receives each semantic object's box as a prompt and refines its polygon. The model is loaded once per API process and runs on the local CUDA device when available, otherwise CPU. If the two environment variables are unset, the semantic polygons are used as-is. Keep the checkpoint on customer-controlled storage and verify the exact checkpoint's commercial terms before deployment.
+
+The Studio canvas restores original room pixels inside returned object polygons after material rendering. This prevents detected sofas, cabinets, rugs and fixtures from being covered by the tile texture. The preservation control can be disabled for comparison. It is only as accurate as the semantic class model and refined masks; visually inspect results on real customer room photos.
+
 The default occlusion labels include common furniture, rugs, fixtures, doors and windows. Override them with a comma-separated SURFACE_OCCLUSION_LABELS value when a model uses different class names. Use exact normalized names from the model's id2label metadata.
 
 For checkpoints with different output conventions, export a compatible semantic segmentation model or implement a dedicated provider adapter. The legacy ONNX adapter is a binary 4-channel model contract and does not provide separate occlusion classes.
