@@ -1,5 +1,6 @@
 import os
 import uuid
+import mimetypes
 from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
@@ -188,7 +189,7 @@ def get_private_media(storage_key: str, current_user: User = Depends(get_current
     path = UPLOAD_DIR / storage_key
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Media not found.")
-    return FileResponse(path, media_type="application/octet-stream", filename=storage_key)
+    return FileResponse(path, media_type=mimetypes.guess_type(storage_key)[0] or "application/octet-stream")
 
 
 @app.get("/api/v1/products", tags=["catalog"])
