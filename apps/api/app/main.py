@@ -160,7 +160,7 @@ async def capabilities():
     return [
         {"id": "catalog", "name": "Multi-category surface catalog", "status": "available", "description": "Manage tiles, stone, wood, wallpaper, countertops, paint, panels and pavers with multiple product assets."},
         {"id": "projects", "name": "Visualization projects", "status": "available", "description": "Create projects and upload room photographs."},
-        {"id": "surface-analysis", "name": "Surface segmentation", "status": "hybrid-mvp", "description": "OpenCV heuristic fallback plus an optional ONNX segmentation model adapter. A trained semantic model must be supplied separately."},
+        {"id": "surface-analysis", "name": "Surface segmentation", "status": "local-ai-foundation", "description": "Local semantic floor/wall segmentation with object-class occlusion polygons when an approved checkpoint is configured; editable OpenCV fallback otherwise."},
         {"id": "ai-depth", "name": "Local AI depth estimation", "status": "optional-local-model", "description": "Depth Anything V2 Small estimates relative scene depth locally when optional AI dependencies are installed; it is not semantic segmentation or metric geometry."},
         {"id": "photo-renderer", "name": "Photo renderer", "status": "mvp", "description": "Preview material textures inside an automatically detected or manually refined surface polygon; perspective-aware rendering is in development."},
         {"id": "camera-preview", "name": "Live camera preview", "status": "planned", "description": "Live camera material preview is planned after the photo workflow."},
