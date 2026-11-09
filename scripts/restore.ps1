@@ -19,8 +19,11 @@ $Compose = @("-f", "docker-compose.production.yml")
 docker compose @Compose stop api
 if ($LASTEXITCODE -ne 0) { throw "Could not stop API." }
 try {
-  docker compose @Compose exec -T postgres sh -c 'pg_restore --clean --if-exists --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < $dump
+  docker compose @Compose cp $dump postgres:/tmp/surface-analyzer-restore.dump
+  if ($LASTEXITCODE -ne 0) { throw "Could not copy database backup into the database container." }
+  docker compose @Compose exec -T postgres sh -c 'pg_restore --clean --if-exists --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB" /tmp/surface-analyzer-restore.dump'
   if ($LASTEXITCODE -ne 0) { throw "Database restore failed." }
+  docker compose @Compose exec -T postgres rm -f /tmp/surface-analyzer-restore.dump
   docker compose @Compose exec -T api sh -c 'find /data/uploads -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +'
   if ($LASTEXITCODE -ne 0) { throw "Could not clear existing uploads." }
   docker compose @Compose cp "$uploads/." api:/data/uploads/
