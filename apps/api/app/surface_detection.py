@@ -162,6 +162,15 @@ def _model_proposal(image: np.ndarray, mode: str, provider) -> dict:
         if class_map.shape != image.shape[:2] or confidence_map.shape != image.shape[:2]:
             raise SurfaceDetectionError("Segmentation provider returned inconsistent scene-map dimensions.")
         occlusions = _occlusion_proposals(class_map, confidence_map, scene["id2label"])
+        try:
+            from .sam2_refinement import refine_occlusions
+            occlusions, sam2_warning = refine_occlusions(image, occlusions)
+        except RuntimeError as exc:
+            raise SurfaceDetectionError(f"Local SAM 2 refinement failed: {str(exc)[:180]}") from exc
+        if sam2_warning:
+            sam2_message = sam2_warning
+        else:
+            sam2_message = None
         from .segmentation_provider import DEFAULT_OCCLUSION_LABELS, normalize_label
         configured = os.getenv("SURFACE_OCCLUSION_LABELS", "").strip()
         occlusion_names = (
@@ -207,6 +216,8 @@ def _model_proposal(image: np.ndarray, mode: str, provider) -> dict:
         warnings.append("This checkpoint returns a binary surface mask; separate occlusion masks are unavailable.")
     elif occlusions:
         warnings.append(f"Detected {len(occlusions)} potential occluding object regions. Review their masks before rendering.")
+        if "sam2_message" in locals() and sam2_message:
+            warnings.append(sam2_message)
     return {
         "points": points, "confidence": round(float(np.mean(probabilities[component > 0])), 2),
         "area_ratio": round(float(area) / float(h * w), 3),
