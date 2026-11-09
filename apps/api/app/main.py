@@ -4,19 +4,50 @@ from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field
 
 from .db import Base, SessionLocal, engine
-from .models import ProductAsset, Project, ProjectAsset, Tenant, TileProduct
+from .models import ProductAsset, Project, ProjectAsset, Tenant, TileProduct, User
+from .auth import create_access_token, decode_access_token, hash_password, verify_password
 
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/data/uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_IMAGES = {"image/jpeg", "image/png", "image/webp"}
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+auth_scheme = HTTPBearer(auto_error=False)
+
+
+class RegisterRequest(BaseModel):
+    workspace_name: str = Field(min_length=2, max_length=160)
+    full_name: str = Field(min_length=1, max_length=160)
+    email: str = Field(min_length=5, max_length=320)
+    password: str = Field(min_length=10, max_length=128)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=320)
+    password: str = Field(min_length=1, max_length=128)
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials | None = Security(auth_scheme), db: Session = Depends(get_db)) -> User:
+    if credentials is None or credentials.scheme.lower() != 'bearer':
+        raise HTTPException(status_code=401, detail='Sign in to access this workspace.', headers={'WWW-Authenticate': 'Bearer'})
+    try:
+        claims = decode_access_token(credentials.credentials)
+        user_id = uuid.UUID(claims['sub'])
+        tenant_id = uuid.UUID(claims['tid'])
+    except (ValueError, KeyError):
+        raise HTTPException(status_code=401, detail='Invalid or expired access token.', headers={'WWW-Authenticate': 'Bearer'})
+    user = db.scalar(select(User).where(User.id == user_id, User.tenant_id == tenant_id, User.is_active.is_(True)))
+    if user is None:
+        raise HTTPException(status_code=401, detail='Account is inactive or no longer available.')
+    return user
 
 
 @lru_cache(maxsize=1)
@@ -69,6 +100,47 @@ async def save_image(upload: UploadFile) -> tuple[str, int]:
     key = f"{uuid.uuid4().hex}{extension}"
     (UPLOAD_DIR / key).write_bytes(content)
     return key, len(content)
+
+
+@app.post("/api/v1/auth/register", tags=["authentication"])
+def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+    email = payload.email.strip().lower()
+    if "@" not in email or email.startswith("@") or email.endswith("@"):
+        raise HTTPException(status_code=422, detail="Enter a valid email address.")
+    if db.scalar(select(User.id).where(func.lower(User.email) == email)):
+        raise HTTPException(status_code=409, detail="An account with this email already exists.")
+    slug_base = "".join(ch.lower() if ch.isalnum() else "-" for ch in payload.workspace_name.strip()).strip("-")[:60] or "workspace"
+    tenant = Tenant(name=payload.workspace_name.strip(), slug=f"{slug_base}-{uuid.uuid4().hex[:8]}")
+    db.add(tenant)
+    db.flush()
+    user = User(tenant_id=tenant.id, email=email, full_name=payload.full_name.strip(), password_hash=hash_password(payload.password), role="owner")
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {"access_token": create_access_token(str(user.id), str(tenant.id)), "token_type": "bearer", "expires_in": 3600,
+            "user": {"id": str(user.id), "email": user.email, "full_name": user.full_name, "role": user.role},
+            "workspace": {"id": str(tenant.id), "name": tenant.name, "slug": tenant.slug}}
+
+
+@app.post("/api/v1/auth/login", tags=["authentication"])
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    email = payload.email.strip().lower()
+    user = db.scalar(select(User).where(func.lower(User.email) == email))
+    if user is None or not user.is_active or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Email or password is incorrect.")
+    tenant = db.get(Tenant, user.tenant_id)
+    if tenant is None or not tenant.is_active:
+        raise HTTPException(status_code=403, detail="Workspace is inactive.")
+    return {"access_token": create_access_token(str(user.id), str(tenant.id)), "token_type": "bearer", "expires_in": 3600,
+            "user": {"id": str(user.id), "email": user.email, "full_name": user.full_name, "role": user.role},
+            "workspace": {"id": str(tenant.id), "name": tenant.name, "slug": tenant.slug}}
+
+
+@app.get("/api/v1/auth/me", tags=["authentication"])
+def me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    tenant = db.get(Tenant, current_user.tenant_id)
+    return {"user": {"id": str(current_user.id), "email": current_user.email, "full_name": current_user.full_name, "role": current_user.role},
+            "workspace": {"id": str(tenant.id), "name": tenant.name, "slug": tenant.slug}}
 
 
 @app.get("/", tags=["system"])
