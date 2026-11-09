@@ -5,6 +5,8 @@ from app.depth_estimation import DepthAnythingV2
 def test_depth_estimator_normalizes_depth_to_uint8(monkeypatch):
     class Tensor:
         def __init__(self, data): self.data = data
+        def to(self, device): return self
+        def is_floating_point(self): return False
         def unsqueeze(self, axis): return self
         def squeeze(self): return self
         def float(self): return self
