@@ -15,8 +15,8 @@ import numpy as np
 
 class Sam2OcclusionRefiner:
     def __init__(self, config_path: str, checkpoint_path: str):
-        if not os.path.isfile(config_path):
-            raise RuntimeError(f"SAM 2 config file not found: {config_path}")
+        if not config_path.strip():
+            raise RuntimeError("Set SURFACE_SAM2_CONFIG to an installed SAM 2 Hydra config name.")
         if not os.path.isfile(checkpoint_path):
             raise RuntimeError(f"SAM 2 checkpoint not found: {checkpoint_path}")
         try:
