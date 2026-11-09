@@ -1,0 +1,5 @@
+# Optional local AI inference dependencies. Install CUDA-enabled PyTorch separately for NVIDIA acceleration.
+torch>=2.4,<3
+transformers>=4.45,<5
+safetensors>=0.4,<1
+pillow>=10,<13
