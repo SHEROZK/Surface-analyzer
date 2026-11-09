@@ -79,8 +79,8 @@ async def capabilities():
     return [
         {"id": "catalog", "name": "Multi-category surface catalog", "status": "available", "description": "Manage tiles, stone, wood, wallpaper, countertops, paint, panels and pavers with multiple product assets."},
         {"id": "projects", "name": "Visualization projects", "status": "available", "description": "Create projects and upload room photographs."},
-        {"id": "surface-analysis", "name": "Surface selection", "status": "mvp", "description": "Manually outline the target surface in the visualizer."},
-        {"id": "photo-renderer", "name": "Photo renderer", "status": "mvp", "description": "Preview a repeating material texture inside a manually selected polygon; perspective-aware rendering is still in development."},
+        {"id": "surface-analysis", "name": "Automatic surface detection", "status": "mvp", "description": "OpenCV proposes a floor boundary from the room photo; users can refine the outline."},
+        {"id": "photo-renderer", "name": "Photo renderer", "status": "mvp", "description": "Preview material textures inside an automatically detected or manually refined surface polygon; perspective-aware rendering is in development."},
         {"id": "camera-preview", "name": "Live camera preview", "status": "planned", "description": "Live camera material preview is planned after the photo workflow."},
     ]
 
@@ -217,6 +217,75 @@ async def upload_room_image(project_id: uuid.UUID, image: UploadFile = File(...)
     db.add(asset)
     db.commit()
     return {"asset_id": str(asset.id), "room_image_url": f"/uploads/{key}", "size_bytes": size}
+
+
+@app.post("/api/v1/projects/{project_id}/detect-surface", tags=["surface-analysis"])
+def detect_surface(project_id: uuid.UUID, mode: str = "floor", db: Session = Depends(get_db)):
+    """Return an automatic floor-boundary proposal in normalized image coordinates."""
+    if mode != "floor":
+        raise HTTPException(status_code=422, detail="Only floor detection is currently supported.")
+    tenant = get_default_tenant(db)
+    project = db.scalar(select(Project).where(Project.id == project_id, Project.tenant_id == tenant.id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    room_asset = db.scalar(select(ProjectAsset).where(
+        ProjectAsset.project_id == project.id, ProjectAsset.asset_type == "room"
+    ).order_by(ProjectAsset.created_at.desc()))
+    if room_asset is None:
+        raise HTTPException(status_code=404, detail="Upload a room photo first.")
+    try:
+        import cv2
+        import numpy as np
+        image = cv2.imread(str(UPLOAD_DIR / room_asset.storage_key))
+        if image is None:
+            raise ValueError("Image could not be decoded.")
+        original_h, original_w = image.shape[:2]
+        if min(original_w, original_h) < 120:
+            raise HTTPException(status_code=422, detail="Room photo is too small for surface detection.")
+        factor = min(1.0, 960.0 / max(original_w, original_h))
+        if factor < 1:
+            image = cv2.resize(image, (int(original_w * factor), int(original_h * factor)), interpolation=cv2.INTER_AREA)
+        h, w = image.shape[:2]
+        mask = np.full((h, w), cv2.GC_PR_BGD, dtype=np.uint8)
+        mask[int(h * .48):, :] = cv2.GC_PR_FGD
+        mask[int(h * .90):, :] = cv2.GC_FGD
+        mask[:int(h * .40), :] = cv2.GC_BGD
+        cv2.ellipse(mask, (w // 2, int(h * .78)), (max(8, int(w * .16)), max(8, int(h * .12))),
+                    0, 0, 360, cv2.GC_FGD, -1)
+        bg_model = np.zeros((1, 65), np.float64)
+        fg_model = np.zeros((1, 65), np.float64)
+        cv2.grabCut(image, mask, None, bg_model, fg_model, 4, cv2.GC_INIT_WITH_MASK)
+        binary = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype("uint8")
+        binary[:int(h * .42), :] = 0
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
+        candidates = []
+        for label in range(1, count):
+            x, y, cw, ch, area = stats[label]
+            if y + ch >= int(h * .94) and area > h * w * .025:
+                candidates.append((area, label))
+        if not candidates:
+            raise HTTPException(status_code=422, detail="A clear floor boundary was not found. Try a wider room photo or outline it manually.")
+        area, label = max(candidates)
+        component = np.where(labels == label, 255, 0).astype("uint8")
+        component = cv2.morphologyEx(component, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+        contours, _ = cv2.findContours(component, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contour = max(contours, key=cv2.contourArea)
+        perimeter = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, max(2.0, perimeter * .008), True).reshape(-1, 2)
+        if len(approx) < 3:
+            raise HTTPException(status_code=422, detail="The floor boundary was too ambiguous to outline.")
+        points = [{"x": round(float(x) / w, 5), "y": round(float(y) / h, 5)} for x, y in approx]
+        area_ratio = float(area) / float(h * w)
+        bottom_ratio = float(np.count_nonzero(component[int(h * .94):, :])) / float(max(1, int(h * .06) * w))
+        confidence = max(.15, min(.82, .25 + min(area_ratio, .65) * .55 + bottom_ratio * .18))
+        return {"mode": mode, "points": points, "confidence": round(confidence, 2),
+                "area_ratio": round(area_ratio, 3), "method": "opencv-grabcut-floor-prior"}
+    except HTTPException:
+        raise
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Automatic detection is unavailable because the vision dependency is not installed.")
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Automatic detection failed: {str(exc)[:160]}")
 
 
 @app.get("/api/v1/projects/{project_id}", tags=["projects"])
