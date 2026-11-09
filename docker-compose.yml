@@ -2,49 +2,69 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: surface_analyzer
-      POSTGRES_USER: surface
-      POSTGRES_PASSWORD: surface_dev_password
-    ports: ["5432:5432"]
-    volumes: [postgres_data:/var/lib/postgresql/data]
+      POSTGRES_DB: ${POSTGRES_DB:-surface_analyzer}
+      POSTGRES_USER: ${POSTGRES_USER:-surface}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-surface_dev_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U surface -d surface_analyzer"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-surface} -d ${POSTGRES_DB:-surface_analyzer}"]
       interval: 5s
       timeout: 5s
       retries: 10
+
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+    ports:
+      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
+
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: surface
-      MINIO_ROOT_PASSWORD: surface_minio_dev_password
-    ports: ["9000:9000", "9001:9001"]
-    volumes: [minio_data:/data]
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-surface}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-surface_minio_dev_password}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
   api:
     build: ./apps/api
     environment:
-      DATABASE_URL: postgresql+psycopg://surface:surface_dev_password@postgres:5432/surface_analyzer
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-surface}:${POSTGRES_PASSWORD:-surface_dev_password}@postgres:5432/${POSTGRES_DB:-surface_analyzer}
       REDIS_URL: redis://redis:6379/0
       APP_ENV: development
-      CORS_ORIGINS: http://localhost:3000\n      UPLOAD_DIR: /data/uploads
-    ports: ["8000:8000"]
+      CORS_ORIGINS: http://localhost:3000
+      UPLOAD_DIR: /data/uploads
+    ports:
+      - "8000:8000"
+    volumes:
+      - api_uploads:/data/uploads
     depends_on:
-      postgres: { condition: service_healthy }
-      redis: { condition: service_healthy }
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   web:
     build: ./apps/web
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
-    ports: ["3000:3000"]
-    depends_on: [api]
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
 volumes:
   postgres_data:
   minio_data:
+  api_uploads:
