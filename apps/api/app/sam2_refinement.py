@@ -101,6 +101,8 @@ def get_sam2_refiner() -> Sam2OcclusionRefiner | None:
 
 
 def refine_occlusions(image: np.ndarray, proposals: list[dict]) -> tuple[list[dict], str | None]:
+    if not proposals:
+        return proposals, None
     refiner = get_sam2_refiner()
     if refiner is None:
         return proposals, None
