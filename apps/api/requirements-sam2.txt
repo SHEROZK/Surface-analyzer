@@ -1,0 +1,4 @@
+# Optional SAM 2 object-boundary refinement. Install only when SURFACE_SAM2_CONFIG
+# and SURFACE_SAM2_CHECKPOINT point to locally stored, approved model files.
+# Install a CUDA-enabled PyTorch build separately before this package for GPU use.
+git+https://github.com/facebookresearch/sam2.git

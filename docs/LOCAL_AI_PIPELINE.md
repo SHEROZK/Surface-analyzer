@@ -1,42 +1,70 @@
 # Local AI vision pipeline
 
-## Implemented AI stage
+## Implemented AI stages
 
-Surface Analyzer includes an optional, customer-hosted monocular depth inference stage using **Depth Anything V2 Small** (`depth-anything/Depth-Anything-V2-Small-hf`). Its model card labels the Small checkpoint Apache-2.0.
+Surface Analyzer has two optional local AI stages:
 
-- Inference runs inside the customer's API process. Room photos are not sent to a vendor API.
-- Weights are downloaded from Hugging Face on first inference and cached under `HF_HOME`.
-- CUDA is selected automatically when the installed PyTorch build and runtime expose it; otherwise inference uses CPU.
-- The model loads lazily and remains cached in process memory.
-- Existing ONNX segmentation is a separate optional adapter requiring a compatible model supplied by the customer. OpenCV GrabCut remains a heuristic fallback.
+- **Depth estimation:** Depth Anything V2 Small estimates relative scene depth. It is not metric geometry.
+- **Semantic segmentation:** a customer-selected Hugging Face semantic checkpoint can return per-pixel floor/wall probabilities and scene classes. Detected furniture and other configured object classes are returned as separate normalized occlusion polygons and removed from the target surface proposal.
 
-## Enable
+Both stages run inside the customer's API process. Room photos are not sent to a vendor inference API. Model weights are cached in the customer-controlled Hugging Face cache. CUDA is selected when the installed PyTorch build and runtime expose it; otherwise inference runs on CPU.
+
+The existing binary ONNX adapter remains supported. OpenCV GrabCut remains the fallback when no segmentation provider is configured.
+
+## Commercial model and dataset licensing gate
+
+**Do not use ADE20K-derived pretrained weights in a commercial Surface Analyzer deployment unless the relevant rights holders grant commercial permission.** MIT CSAIL's ADE20K image terms restrict the images to non-commercial research and educational use. The fact that a third-party model card says BSD-3-Clause does not automatically grant commercial rights to the training images or learned weights. In particular, the common NVIDIA SegFormer ADE20K checkpoint and Pictograph SceneParse150 checkpoint are not approved defaults for this commercial product until their training-data and weight rights are independently cleared.
+
+The intended production path is a model trained or fine-tuned on a properly licensed indoor-room/tile dataset, with written rights for commercial training and deployment. Keep the model checkpoint external to the repository and set the model ID/path only after legal and technical review. Model architecture/code licensing, checkpoint licensing, and training-data licensing are separate checks.
+
+## Enable semantic segmentation
+
+1. Set INSTALL_AI=true in the installation .env file and rebuild the API image.
+2. Set SURFACE_SEGMENTATION_BACKEND=transformers.
+3. Set SURFACE_SEGMENTATION_MODEL_ID to an approved semantic checkpoint exposing floor and wall classes in id2label.
+4. Ensure that the checkpoint also labels furniture/object classes if separate occlusion polygons are required.
+5. Set HF_HOME to a persistent customer-controlled directory (production Compose mounts api_models).
+6. Restart the API and call authenticated POST /api/v1/projects/{project_id}/detect-surface?mode=floor or mode=wall.
+
+The provider resolves class IDs from model metadata; it does not hardcode ADE20K class indexes. The endpoint returns the main target polygon plus an occlusions array. Each occlusion includes a class label, normalized polygon, normalized bounding box, confidence and area ratio. The target proposal excludes pixels assigned to configured occlusion classes.
+
+### Optional SAM 2 object-boundary refinement
+
+The semantic model identifies object classes and proposes object boxes. For higher-quality boundaries, install `apps/api/requirements-sam2.txt`, then set `SURFACE_SAM2_CONFIG` to the installed SAM 2 Hydra config name (for example, `configs/sam2.1/sam2.1_hiera_l.yaml`) and `SURFACE_SAM2_CHECKPOINT` to a locally stored checkpoint file. SAM 2 receives each semantic object's box as a prompt and refines its polygon. The model is loaded once per API process and runs on the local CUDA device when available, otherwise CPU. If the two environment variables are unset, the semantic polygons are used as-is. Keep the checkpoint on customer-controlled storage and verify the exact checkpoint's commercial terms before deployment.
+
+The Studio canvas restores original room pixels inside returned object polygons after material rendering. This prevents detected sofas, cabinets, rugs and fixtures from being covered by the tile texture. The preservation control can be disabled for comparison. It is only as accurate as the semantic class model and refined masks; visually inspect results on real customer room photos.
+
+The default occlusion labels include common furniture, rugs, fixtures, doors and windows. Override them with a comma-separated SURFACE_OCCLUSION_LABELS value when a model uses different class names. Use exact normalized names from the model's id2label metadata.
+
+For checkpoints with different output conventions, export a compatible semantic segmentation model or implement a dedicated provider adapter. The legacy ONNX adapter is a binary 4-channel model contract and does not provide separate occlusion classes.
+
+## Enable depth estimation
 
 ### Docker Compose installation
 
-1. Set `INSTALL_AI=true` in the installation `.env` file.
-2. Rebuild and restart the API: `docker compose -f docker-compose.production.yml build api` then `docker compose -f docker-compose.production.yml up -d api`.
-3. Open Studio, select a project with a room photo, and choose **AI depth analysis**. The first run downloads the model into the persistent `api_models` volume and therefore requires internet access. Later runs use the local cache.
+1. Set INSTALL_AI=true in the installation .env file.
+2. Rebuild and restart the API image using the production Compose file.
+3. Open Studio, select a project with a room photo, and choose AI depth analysis. First use downloads model weights into the persistent api_models volume and requires internet access. Later runs use the local cache.
 
 ### Direct Python installation
 
-1. In `apps/api`, install base requirements, then `pip install -r requirements-ai.txt`.
-2. For NVIDIA acceleration, install a CUDA-enabled PyTorch build compatible with the host driver before installing the remaining AI requirements. Standard CPU PyTorch will run on CPU.
-3. Set `HF_HOME` to a customer-controlled persistent directory.
-4. Call authenticated `POST /api/v1/projects/{project_id}/analyze-depth`.
+1. In apps/api, install base requirements, then apps/api/requirements-ai.txt.
+2. For NVIDIA acceleration, install a CUDA-enabled PyTorch build compatible with the host driver before installing the remaining AI requirements. Standard CPU PyTorch runs on CPU.
+3. Set HF_HOME to a customer-controlled persistent directory.
 
-The Studio button displays the returned depth map. For Docker Desktop with NVIDIA GPU passthrough configured, use the optional override: `docker compose -f docker-compose.production.yml -f docker-compose.gpu.yml build api` and `docker compose -f docker-compose.production.yml -f docker-compose.gpu.yml up -d api`. The host must have a compatible NVIDIA driver and Docker GPU support; the PyTorch build inside the container must include CUDA support. Without all three, the model uses CPU. GPU passthrough on Windows Docker Desktop depends on the WSL2 and driver setup and has not yet been verified on every Windows configuration.
+For Docker Desktop with NVIDIA GPU passthrough, the host needs a compatible NVIDIA driver and Docker GPU support, and the container PyTorch build must include CUDA support. Without all three, the model uses CPU. GPU passthrough on Windows Docker Desktop depends on WSL2 and driver setup and has not yet been verified on every Windows configuration.
 
-The response contains a normalized grayscale depth map as a PNG data URL, dimensions, device, and model identifier.
+## Limits and next validation gates
 
-## Limits
+- Relative depth is not a real-world measurement.
+- Generic indoor semantic models can confuse rugs, reflective surfaces, unusual camera angles, furniture, and partially occluded boundaries.
+- Object-class segmentation is not a guarantee that every object is detected or that its boundary is pixel-perfect.
+- The API returns editable proposals; manual correction remains required.
+- The ONNX adapter still requires a compatible customer-supplied model file.
+- This is an AI pipeline foundation, not Roomvo-level output. Before production, validate on a held-out set of real phone photos from tile showrooms and lived-in rooms, measure floor/wall IoU and occlusion recall, and test perspective mapping, lighting, shadows, reflections and grout.
 
-- The model estimates relative depth, not reliable real-world distances.
-- Mirrors, glass, reflections, occlusions, repetitive patterns and unusual camera angles can cause errors.
-- Depth is not semantic floor/wall segmentation and does not replace manual boundary correction.
-- The ONNX segmentation adapter still has no bundled trained weights. Do not label the current floor/wall detector as semantic AI.
-- This is an AI foundation milestone, not Roomvo-level output. A commercial-use semantic/instance segmentation model validated on indoor surface imagery, object occlusion masks, perspective geometry, material-aware lighting and a real-photo benchmark are still required.
+## References
 
-## Model reference
-
-https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf
+- ADE20K terms: https://sceneparsing.csail.mit.edu/terms/
+- Transformers semantic segmentation: https://huggingface.co/docs/transformers/tasks/semantic_segmentation
+- NVIDIA SegFormer license notice: https://github.com/NVlabs/SegFormer
