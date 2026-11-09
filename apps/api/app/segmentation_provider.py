@@ -23,7 +23,7 @@ DEFAULT_OCCLUSION_LABELS = {
 
 
 def normalize_label(value: str) -> str:
-    return re.sub(r"\\s+", " ", str(value).strip().lower().replace("_", " ").replace("-", " "))
+    return re.sub(r"\s+", " ", str(value).strip().lower().replace("_", " ").replace("-", " "))
 
 
 def _label_id_for_mode(id2label: dict, mode: str) -> int:
