@@ -5,9 +5,11 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
+
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
 
 class Tenant(TimestampMixin, Base):
     __tablename__ = "tenants"
@@ -18,6 +20,7 @@ class Tenant(TimestampMixin, Base):
     users: Mapped[list["User"]] = relationship(back_populates="tenant")
     products: Mapped[list["TileProduct"]] = relationship(back_populates="tenant")
     projects: Mapped[list["Project"]] = relationship(back_populates="tenant")
+
 
 class User(TimestampMixin, Base):
     __tablename__ = "users"
@@ -30,19 +33,39 @@ class User(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     tenant: Mapped["Tenant"] = relationship(back_populates="users")
 
+
 class TileProduct(TimestampMixin, Base):
+    """Catalog item retained under its original table name for backwards compatibility."""
     __tablename__ = "tile_products"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     sku: Mapped[str | None] = mapped_column(String(100), index=True)
     description: Mapped[str | None] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(80), default="tile", server_default="tile", nullable=False)
+    brand: Mapped[str | None] = mapped_column(String(160))
+    collection: Mapped[str | None] = mapped_column(String(160))
     width_mm: Mapped[int | None] = mapped_column(Integer)
     height_mm: Mapped[int | None] = mapped_column(Integer)
     finish: Mapped[str | None] = mapped_column(String(80))
     material_asset_key: Mapped[str | None] = mapped_column(String(500))
     metadata_json: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
     tenant: Mapped["Tenant"] = relationship(back_populates="products")
+    assets: Mapped[list["ProductAsset"]] = relationship(back_populates="product", cascade="all, delete-orphan", order_by="ProductAsset.created_at")
+
+
+class ProductAsset(TimestampMixin, Base):
+    __tablename__ = "product_assets"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tile_products.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(40), nullable=False, default="gallery")
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    original_name: Mapped[str | None] = mapped_column(String(255))
+    mime_type: Mapped[str | None] = mapped_column(String(120))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
+    product: Mapped["TileProduct"] = relationship(back_populates="assets")
+
 
 class Project(TimestampMixin, Base):
     __tablename__ = "projects"
@@ -54,6 +77,7 @@ class Project(TimestampMixin, Base):
     settings: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     tenant: Mapped["Tenant"] = relationship(back_populates="projects")
     assets: Mapped[list["ProjectAsset"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+
 
 class ProjectAsset(TimestampMixin, Base):
     __tablename__ = "project_assets"
