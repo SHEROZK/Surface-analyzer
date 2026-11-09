@@ -47,13 +47,23 @@ Open the studio at http://localhost:3000. The API is available at http://localho
 
 ## Backup and restore
 
-Stop writes before making a consistent backup. For a basic database backup:
+Use the included scripts to back up both the PostgreSQL database and uploaded room/product files. The scripts briefly stop the API to prevent uploads changing during the file copy, then restart it automatically.
 
-```bash
-docker compose -f docker-compose.production.yml exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > surface-analyzer.sql
+Windows PowerShell:
+
+```powershell
+.\\scripts\\backup.ps1
+.\\scripts\\restore.ps1 -BackupPath .\\backups\\surface-analyzer-YYYYMMDD-HHMMSS -ConfirmDataReplacement
 ```
 
-Back up the `api_uploads` volume as well as the database. A database-only backup does not include room photos or product textures. Store backups outside the installation machine and test restores before relying on them.
+Linux:
+
+```bash
+./scripts/backup.sh
+./scripts/restore.sh ./backups/surface-analyzer-YYYYMMDD-HHMMSS --confirm-data-replacement
+```
+
+Restore replaces current database contents and uploaded files. Verify the selected backup before confirming. Each backup also contains the installation's `.env`; treat the entire backup directory as sensitive because it contains authentication and database secrets. Copy backups to encrypted off-machine storage and periodically test restores on a separate installation. These are manual scripts; scheduled backup rotation and off-site transfer are not yet included.
 
 ## Updating
 
