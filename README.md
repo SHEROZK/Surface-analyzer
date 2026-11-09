@@ -1,6 +1,6 @@
 # Surface Analyzer
 
-Surface visualization SaaS for tiles and other architectural finishes. The local MVP supports a multi-category material catalog and previews a selected material inside a manually outlined region of a room photograph.
+Self-hosted surface visualization software for tiles and other architectural finishes. Each business runs its own installation and controls its data, users, catalog, and infrastructure. The local MVP supports a multi-category material catalog and previews a selected material inside a manually outlined region of a room photograph.
 
 ## MVP features
 - Create and switch between visualization projects.
@@ -69,6 +69,6 @@ docker-compose.yml
 1. Add automated API and frontend build checks; verify the compose stack end-to-end.
 2. Improve polygon editing and build a deterministic perspective-aware renderer with grout, tile layouts, rotation, and room-light preservation.
 3. Add AI-assisted room segmentation, occlusion, and object-aware masks.
-4. Add authentication and enforce tenant isolation before multi-customer deployment.
+4. Complete organization-level authentication, roles, and access controls for each independent installation.
 5. Integrate AI surface suggestions and object-aware masking.
 6. Integrate live camera preview, then billing, embed SDK, and production operations.
