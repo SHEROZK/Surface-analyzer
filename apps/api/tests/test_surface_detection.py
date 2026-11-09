@@ -18,7 +18,7 @@ def test_floor_detector_returns_normalized_polygon_for_simple_room():
     assert len(result["points"]) <= 32
     assert 0.0 < result["area_ratio"] < 1.0
     assert 0.15 <= result["confidence"] <= 0.82
-    assert result["method"] == "opencv-grabcut-floor-prior-v2"
+    assert result["method"] == "opencv-grabcut-floor-prior-v1"
     for point in result["points"]:
         assert 0.0 <= point["x"] <= 1.0
         assert 0.0 <= point["y"] <= 1.0
