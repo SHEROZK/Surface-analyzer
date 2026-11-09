@@ -79,3 +79,36 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://surface:surface_dev_password@localhost:5432/surface_analyzer
         run: alembic upgrade head
+
+  deployment-config:
+    name: Self-hosted deployment configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      POSTGRES_PASSWORD: ci-only-dummy-password
+      AUTH_SECRET: ci-only-dummy-signing-secret-at-least-32-characters
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate production Compose configuration
+        run: docker compose -f docker-compose.production.yml config --quiet
+      - name: Validate shell scripts
+        run: |
+          bash -n scripts/backup.sh
+          bash -n scripts/restore.sh
+
+  powershell:
+    name: Windows installer and backup script syntax
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell scripts
+        shell: pwsh
+        run: |
+          $files = @("scripts/install.ps1", "scripts/backup.ps1", "scripts/restore.ps1")
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $file), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) { throw ($file + ": " + ($errors -join "; ")) }
+          }
