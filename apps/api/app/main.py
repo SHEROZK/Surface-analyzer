@@ -1,5 +1,6 @@
 import os
 import uuid
+from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,6 +17,12 @@ UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/data/uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_IMAGES = {"image/jpeg", "image/png", "image/webp"}
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+
+
+@lru_cache(maxsize=1)
+def get_surface_segmentation_provider():
+    from .segmentation_provider import get_segmentation_provider
+    return get_segmentation_provider()
 
 app = FastAPI(
     title="Surface Analyzer API",
@@ -236,15 +243,18 @@ def detect_surface(project_id: uuid.UUID, mode: str = "floor", db: Session = Dep
     try:
         import cv2
         from .surface_detection import SurfaceDetectionError, detect_floor_boundary, detect_wall_boundary
+        provider = get_surface_segmentation_provider()
         image = cv2.imread(str(UPLOAD_DIR / room_asset.storage_key))
         if image is None:
             raise HTTPException(status_code=422, detail="Room image could not be decoded.")
-        result = detect_floor_boundary(image) if mode == "floor" else detect_wall_boundary(image)
+        result = detect_floor_boundary(image, provider) if mode == "floor" else detect_wall_boundary(image, provider)
         return {"mode": mode, **result}
     except HTTPException:
         raise
     except ImportError:
         raise HTTPException(status_code=503, detail="Automatic detection is unavailable because the vision dependency is not installed.")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=f"Segmentation model is not available: {str(exc)[:160]}")
     except SurfaceDetectionError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
