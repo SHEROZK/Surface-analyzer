@@ -27,6 +27,7 @@ export default function Workspace() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const roomImageRef = useRef<HTMLImageElement | null>(null);
   const textureImageRef = useRef<HTMLImageElement | null>(null);
+  const textureFacesRef = useRef<HTMLImageElement[]>([]);
 
   const refresh = useCallback(async () => {
     try {
@@ -70,20 +71,30 @@ export default function Workspace() {
       points.forEach((point, index) => index === 0 ? ctx.moveTo(point.x * canvas.width, point.y * canvas.height) : ctx.lineTo(point.x * canvas.width, point.y * canvas.height));
       ctx.closePath();
       ctx.clip();
-      const texture = textureImageRef.current;
-      if (texture?.complete && texture.naturalWidth) {
-        const pattern = ctx.createPattern(texture, "repeat");
-        if (pattern) {
-          const tileWidth = Math.max(24, canvas.width * scale / 2.5);
-          const tileHeight = tileWidth * (texture.naturalHeight / texture.naturalWidth);
-          ctx.globalAlpha = opacity;
-          ctx.translate(0, 0);
-          ctx.scale(tileWidth / texture.naturalWidth, tileHeight / texture.naturalHeight);
-          const scaledPattern = ctx.createPattern(texture, "repeat");
-          if (scaledPattern) {
-            ctx.setTransform(tileWidth / texture.naturalWidth, 0, 0, tileHeight / texture.naturalHeight, 0, 0);
-            ctx.fillStyle = scaledPattern;
-            ctx.fillRect(0, 0, canvas.width * texture.naturalWidth / tileWidth, canvas.height * texture.naturalHeight / tileHeight);
+      const primaryTexture = textureImageRef.current;
+      const faces = [primaryTexture, ...textureFacesRef.current].filter((image): image is HTMLImageElement => Boolean(image?.complete && image.naturalWidth));
+      if (faces.length) {
+        const tileWidth = Math.max(28, canvas.width * scale / 2.5);
+        const tileHeight = tileWidth * (faces[0].naturalHeight / faces[0].naturalWidth);
+        const grout = Math.max(1, tileWidth * 0.012);
+        ctx.globalAlpha = opacity;
+        ctx.fillStyle = "#aaa69c";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const columns = Math.ceil(canvas.width / tileWidth) + 2;
+        const rows = Math.ceil(canvas.height / tileHeight) + 2;
+        for (let row = -1; row < rows; row++) {
+          for (let column = -1; column < columns; column++) {
+            const seed = Math.abs((row * 73856093) ^ (column * 19349663));
+            const face = faces[seed % faces.length];
+            const offset = row % 2 === 1 ? tileWidth / 2 : 0;
+            const x = column * tileWidth + offset;
+            const y = row * tileHeight;
+            ctx.save();
+            ctx.translate(x + tileWidth / 2, y + tileHeight / 2);
+            if (seed % 7 === 0) ctx.scale(-1, 1);
+            if (seed % 11 === 0) ctx.scale(1, -1);
+            ctx.drawImage(face, -tileWidth / 2 + grout / 2, -tileHeight / 2 + grout / 2, tileWidth - grout, tileHeight - grout);
+            ctx.restore();
           }
         }
       } else {
@@ -115,15 +126,22 @@ export default function Workspace() {
     image.onload = () => { roomImageRef.current = image; redraw(); };
     image.src = API + url;
   }
-  function loadTexture(url?: string | null) {
+  function loadTexture(url?: string | null, faces: string[] = []) {
     textureImageRef.current = null;
+    textureFacesRef.current = [];
     if (!url) { redraw(); return; }
-    const image = new Image();
-    image.onload = () => { textureImageRef.current = image; redraw(); };
-    image.src = API + url;
+    const primary = new Image();
+    primary.onload = () => { textureImageRef.current = primary; redraw(); };
+    primary.src = API + url;
+    textureFacesRef.current = faces.map(faceUrl => {
+      const image = new Image();
+      image.onload = () => redraw();
+      image.src = API + faceUrl;
+      return image;
+    });
   }
   useEffect(() => { if (roomUrl) loadRoom(roomUrl); else { roomImageRef.current = null; redraw(); } }, [roomUrl]);
-  useEffect(() => { loadTexture(activeProduct?.material_url); }, [activeProduct?.material_url]);
+  useEffect(() => { loadTexture(activeProduct?.material_url, activeProduct?.assets?.filter(asset => asset.role === "texture_face").map(asset => asset.url) || []); }, [activeProduct?.id, activeProduct?.material_url]);
 
   async function createProject(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setMessage("");
@@ -181,13 +199,13 @@ export default function Workspace() {
         </section>
         <section className="panel"><div className="panel-title"><span>02 / MATERIAL LIBRARY</span><span>{products.length} PRODUCTS</span></div>
           <div className="product-list">{products.map(product=><button key={product.id} className={"product-item "+(selectedProduct===product.id?"active":"")} onClick={()=>setSelectedProduct(product.id)}><span className="swatch">{product.material_url?<img src={API+product.material_url} alt=""/>:<span>▧</span>}</span><span>{product.name}<small>{[product.category?.replaceAll("-"," "),product.brand,product.collection,product.width_mm&&product.height_mm?product.width_mm+" × "+product.height_mm+" mm":null,product.finish].filter(Boolean).join(" · ")||"Surface material"}</small></span></button>)}</div>
-          <details className="add-material"><summary>＋ Add a surface product</summary><form onSubmit={createProduct} className="stack-form"><input name="name" placeholder="Material name" required/><input name="sku" placeholder="SKU / product code (optional)"/><select name="category" defaultValue="tile"><option value="tile">Tile / Porcelain</option><option value="natural-stone">Natural stone / Marble</option><option value="wood-flooring">Wood / Flooring</option><option value="wallpaper">Wallpaper</option><option value="countertop">Countertop / Slab</option><option value="paint">Paint / Coating</option><option value="panel">Wall / Decorative panel</option><option value="paver">Outdoor paver</option><option value="other">Other surface</option></select><input name="brand" placeholder="Brand / manufacturer (optional)"/><input name="collection" placeholder="Collection / range (optional)"/><div className="two-inputs"><input name="width_mm" type="number" min="1" placeholder="Width mm"/><input name="height_mm" type="number" min="1" placeholder="Height mm"/></div><select name="finish" defaultValue="Matt"><option>Matt</option><option>Polished</option><option>Gloss</option><option>Textured</option><option>Stone</option><option>Wood effect</option></select><label className="file-label">Seamless texture / main material image<input name="texture" type="file" accept="image/png,image/jpeg,image/webp"/></label><label className="file-label">Product gallery images (multiple)<input name="gallery" type="file" accept="image/png,image/jpeg,image/webp" multiple/></label><label className="file-label">Normal map (optional)<input name="normal_map" type="file" accept="image/png,image/jpeg,image/webp"/></label><label className="file-label">Roughness map (optional)<input name="roughness_map" type="file" accept="image/png,image/jpeg,image/webp"/></label><button className="dark-button" disabled={busy}>Save product</button></form></details>
+          <details className="add-material"><summary>＋ Add a surface product</summary><form onSubmit={createProduct} className="stack-form"><input name="name" placeholder="Material name" required/><input name="sku" placeholder="SKU / product code (optional)"/><select name="category" defaultValue="tile"><option value="tile">Tile / Porcelain</option><option value="natural-stone">Natural stone / Marble</option><option value="wood-flooring">Wood / Flooring</option><option value="wallpaper">Wallpaper</option><option value="countertop">Countertop / Slab</option><option value="paint">Paint / Coating</option><option value="panel">Wall / Decorative panel</option><option value="paver">Outdoor paver</option><option value="other">Other surface</option></select><input name="brand" placeholder="Brand / manufacturer (optional)"/><input name="collection" placeholder="Collection / range (optional)"/><div className="two-inputs"><input name="width_mm" type="number" min="1" placeholder="Width mm"/><input name="height_mm" type="number" min="1" placeholder="Height mm"/></div><select name="finish" defaultValue="Matt"><option>Matt</option><option>Polished</option><option>Gloss</option><option>Textured</option><option>Stone</option><option>Wood effect</option></select><label className="file-label">Seamless texture / main material image<input name="texture" type="file" accept="image/png,image/jpeg,image/webp"/></label><label className="file-label">Texture face variations (multiple)<input name="texture_faces" type="file" accept="image/png,image/jpeg,image/webp" multiple/></label><label className="file-label">Product gallery images (multiple)<input name="gallery" type="file" accept="image/png,image/jpeg,image/webp" multiple/></label><label className="file-label">Normal map (optional)<input name="normal_map" type="file" accept="image/png,image/jpeg,image/webp"/></label><label className="file-label">Roughness map (optional)<input name="roughness_map" type="file" accept="image/png,image/jpeg,image/webp"/></label><button className="dark-button" disabled={busy}>Save product</button></form></details>
         </section>
       </aside>
       <section className="visualizer-panel"><div className="visualizer-top"><div><div className="panel-title">03 / PHOTO VISUALIZER</div><h2>{selectedProject?.name || "Choose a project"}</h2></div><span className="visualizer-status">{roomUrl?"ROOM LOADED":"AWAITING PHOTO"}</span></div>
         {!selectedProject ? <div className="visualizer-empty"><div className="empty-symbol">＋</div><h3>Start with a project</h3><p>Create a project on the left, then upload a room photo to begin.</p></div> :
         <><div className="canvas-wrap">{roomUrl?<canvas ref={canvasRef} onClick={addPoint} aria-label="Room photo. Click to outline the surface to visualize."/>:<div className="upload-empty"><div className="empty-symbol">↑</div><h3>Upload a room photograph</h3><p>JPG, PNG or WebP · up to 15 MB</p><label className="dark-button">Choose room photo<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div>}</div>
-        {roomUrl&&<div className="visualizer-controls"><div className="control-row"><span>Surface outline</span><span>{points.length<3?"Click at least 3 points":points.length+" points selected"}</span></div><div className="control-actions"><button onClick={()=>setPoints([])}>Clear outline</button><button onClick={()=>setPoints(p=>p.slice(0,-1))}>Undo point</button><label className="file-replace">Replace photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div><div className="range-row"><label>Pattern scale <input type="range" min=".15" max=".9" step=".01" value={scale} onChange={e=>setScale(Number(e.target.value))}/></label><label>Opacity <input type="range" min=".2" max="1" step=".01" value={opacity} onChange={e=>setOpacity(Number(e.target.value))}/></label></div><p className="helper-text">Choose a product with a seamless texture image, then click around the floor or wall boundary. The outline closes automatically after three points. Use Undo point or Clear outline to refine it.</p></div>}</>}
+        {roomUrl&&<div className="visualizer-controls"><div className="control-row"><span>Surface outline</span><span>{points.length<3?"Click at least 3 points":points.length+" points selected"}</span></div><div className="control-actions"><button onClick={()=>setPoints([])}>Clear outline</button><button onClick={()=>setPoints(p=>p.slice(0,-1))}>Undo point</button><label className="file-replace">Replace photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div><div className="range-row"><label>Pattern scale <input type="range" min=".15" max=".9" step=".01" value={scale} onChange={e=>setScale(Number(e.target.value))}/></label><label>Opacity <input type="range" min=".2" max="1" step=".01" value={opacity} onChange={e=>setOpacity(Number(e.target.value))}/></label></div><p className="helper-text">Choose a product with a seamless texture image. Add texture-face variations to reduce obvious repetition, then click around the floor or wall boundary. The outline closes automatically after three points. Use Undo point or Clear outline to refine it.</p></div>}</>}
       </section>
     </div>
     <footer className="studio-footer"><span>© 2026 SURFACE ANALYZER</span><span>PHOTO WORKFLOW MVP · MULTI-MATERIAL CATALOG</span></footer>
