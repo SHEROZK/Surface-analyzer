@@ -60,6 +60,7 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://surface:surface_dev_password@localhost:5432/surface_analyzer
           PYTHONPATH: ${{ github.workspace }}/apps/api
+          UPLOAD_DIR: ${{ runner.temp }}/surface-analyzer-uploads
         run: pytest -q
       - name: Apply database migrations
         working-directory: apps/api
