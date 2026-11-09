@@ -79,7 +79,7 @@ async def capabilities():
     return [
         {"id": "catalog", "name": "Multi-category surface catalog", "status": "available", "description": "Manage tiles, stone, wood, wallpaper, countertops, paint, panels and pavers with multiple product assets."},
         {"id": "projects", "name": "Visualization projects", "status": "available", "description": "Create projects and upload room photographs."},
-        {"id": "surface-analysis", "name": "Automatic surface detection", "status": "mvp", "description": "OpenCV proposes a floor boundary from the room photo; users can refine the outline."},
+        {"id": "surface-analysis", "name": "Automatic surface detection", "status": "mvp", "description": "OpenCV proposes editable floor and wall boundaries from room photos; users can refine outlines."},
         {"id": "photo-renderer", "name": "Photo renderer", "status": "mvp", "description": "Preview material textures inside an automatically detected or manually refined surface polygon; perspective-aware rendering is in development."},
         {"id": "camera-preview", "name": "Live camera preview", "status": "planned", "description": "Live camera material preview is planned after the photo workflow."},
     ]
@@ -221,9 +221,9 @@ async def upload_room_image(project_id: uuid.UUID, image: UploadFile = File(...)
 
 @app.post("/api/v1/projects/{project_id}/detect-surface", tags=["surface-analysis"])
 def detect_surface(project_id: uuid.UUID, mode: str = "floor", db: Session = Depends(get_db)):
-    """Return an automatic floor-boundary proposal in normalized image coordinates."""
-    if mode != "floor":
-        raise HTTPException(status_code=422, detail="Only floor detection is currently supported.")
+    """Return an editable floor or wall boundary proposal in normalized image coordinates."""
+    if mode not in {"floor", "wall"}:
+        raise HTTPException(status_code=422, detail="Mode must be floor or wall.")
     tenant = get_default_tenant(db)
     project = db.scalar(select(Project).where(Project.id == project_id, Project.tenant_id == tenant.id))
     if project is None:
@@ -235,11 +235,11 @@ def detect_surface(project_id: uuid.UUID, mode: str = "floor", db: Session = Dep
         raise HTTPException(status_code=404, detail="Upload a room photo first.")
     try:
         import cv2
-        from .surface_detection import SurfaceDetectionError, detect_floor_boundary
+        from .surface_detection import SurfaceDetectionError, detect_floor_boundary, detect_wall_boundary
         image = cv2.imread(str(UPLOAD_DIR / room_asset.storage_key))
         if image is None:
             raise HTTPException(status_code=422, detail="Room image could not be decoded.")
-        result = detect_floor_boundary(image)
+        result = detect_floor_boundary(image) if mode == "floor" else detect_wall_boundary(image)
         return {"mode": mode, **result}
     except HTTPException:
         raise
