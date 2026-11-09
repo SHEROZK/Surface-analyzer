@@ -8,6 +8,52 @@ type Project = { id: string; name: string; status: string; room_image_url?: stri
 type Asset = { id: string; type: string; url: string };
 type ProjectDetail = { id: string; name: string; status: string; assets: Asset[] };
 
+type Point = { x: number; y: number };
+type Quad = [Point, Point, Point, Point];
+
+// Approximate the four floor-plane corners from an automatically detected or
+// manually drawn polygon. The polygon remains the authoritative clipping mask.
+function floorQuad(polygon: Point[]): Quad | null {
+  if (polygon.length < 4) return null;
+  const by = (score: (p: Point) => number) => polygon.reduce((best, p) => score(p) < score(best) ? p : best);
+  const tl = by(p => p.x + p.y);
+  const tr = by(p => -p.x + p.y);
+  const br = by(p => -p.x - p.y);
+  const bl = by(p => p.x - p.y);
+  const unique = [tl, tr, br, bl].filter((p, i, all) => all.findIndex(q => q.x === p.x && q.y === p.y) === i);
+  if (unique.length !== 4) return null;
+  const area = Math.abs((tr.x-tl.x)*(bl.y-tl.y)-(tr.y-tl.y)*(bl.x-tl.x));
+  return area > 0.0001 ? [tl, tr, br, bl] : null;
+}
+
+function affineTriangle(
+  ctx: CanvasRenderingContext2D,
+  image: CanvasImageSource,
+  source: [Point, Point, Point],
+  dest: [Point, Point, Point],
+) {
+  const [s0,s1,s2] = source, [d0,d1,d2] = dest;
+  const den = s0.x*(s1.y-s2.y)+s1.x*(s2.y-s0.y)+s2.x*(s0.y-s1.y);
+  if (Math.abs(den) < 1e-8) return;
+  const a = (d0.x*(s1.y-s2.y)+d1.x*(s2.y-s0.y)+d2.x*(s0.y-s1.y))/den;
+  const c = (d0.x*(s2.x-s1.x)+d1.x*(s0.x-s2.x)+d2.x*(s1.x-s0.x))/den;
+  const e = (d0.x*(s1.x*s2.y-s2.x*s1.y)+d1.x*(s2.x*s0.y-s0.x*s2.y)+d2.x*(s0.x*s1.y-s1.x*s0.y))/den;
+  const b = (d0.y*(s1.y-s2.y)+d1.y*(s2.y-s0.y)+d2.y*(s0.y-s1.y))/den;
+  const d = (d0.y*(s2.x-s1.x)+d1.y*(s0.x-s2.x)+d2.y*(s1.x-s0.x))/den;
+  const f = (d0.y*(s1.x*s2.y-s2.x*s1.y)+d1.y*(s2.x*s0.y-s0.x*s2.y)+d2.y*(s0.x*s1.y-s1.x*s0.y))/den;
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(d0.x,d0.y); ctx.lineTo(d1.x,d1.y); ctx.lineTo(d2.x,d2.y); ctx.closePath(); ctx.clip();
+  ctx.transform(a,b,c,d,e,f);
+  ctx.drawImage(image,0,0);
+  ctx.restore();
+}
+
+function drawImageOnQuad(ctx: CanvasRenderingContext2D, image: CanvasImageSource, quad: Quad, width: number, height: number) {
+  const src: Quad = [{x:0,y:0},{x:width,y:0},{x:width,y:height},{x:0,y:height}];
+  affineTriangle(ctx,image,[src[0],src[1],src[2]],[quad[0],quad[1],quad[2]]);
+  affineTriangle(ctx,image,[src[0],src[2],src[3]],[quad[0],quad[2],quad[3]]);
+}
+
 export default function Workspace() {
   const [products, setProducts] = useState<Product[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -87,17 +133,21 @@ export default function Workspace() {
         const baseHeight = baseWidth * (faces[0].naturalHeight / faces[0].naturalWidth);
         const gap = Math.max(1, baseWidth * groutWidth);
         ctx.globalAlpha = opacity;
-        ctx.fillStyle = groutColor;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const patternCanvas = document.createElement("canvas");
+        patternCanvas.width = canvas.width; patternCanvas.height = canvas.height;
+        const patternCtx = patternCanvas.getContext("2d");
+        if (!patternCtx) { ctx.restore(); return; }
+        patternCtx.fillStyle = groutColor;
+        patternCtx.fillRect(0, 0, canvas.width, canvas.height);
         const drawCell = (x:number, y:number, w:number, h:number, seed:number, angle=0) => {
           const face = faces[Math.abs(seed) % faces.length];
-          ctx.save();
-          ctx.translate(x + w / 2, y + h / 2);
-          ctx.rotate(angle);
-          if (seed % 7 === 0) ctx.scale(-1, 1);
-          if (seed % 11 === 0) ctx.scale(1, -1);
-          ctx.drawImage(face, -w / 2 + gap / 2, -h / 2 + gap / 2, w - gap, h - gap);
-          ctx.restore();
+          patternCtx.save();
+          patternCtx.translate(x + w / 2, y + h / 2);
+          patternCtx.rotate(angle);
+          if (seed % 7 === 0) patternCtx.scale(-1, 1);
+          if (seed % 11 === 0) patternCtx.scale(1, -1);
+          patternCtx.drawImage(face, -w / 2 + gap / 2, -h / 2 + gap / 2, w - gap, h - gap);
+          patternCtx.restore();
         };
         if (pattern === "herringbone") {
           const w = baseWidth * 0.5;
@@ -126,6 +176,13 @@ export default function Workspace() {
             const seed = (row * 73856093) ^ (col * 19349663);
             drawCell(col * stepX + offset, row * stepY, cellW, cellH, seed, diagonal);
           }
+        }
+        const quad = floorQuad(points);
+        if (quad) {
+          const projected: Quad = quad.map(p => ({x:p.x*canvas.width,y:p.y*canvas.height})) as Quad;
+          drawImageOnQuad(ctx, patternCanvas, projected, canvas.width, canvas.height);
+        } else {
+          ctx.drawImage(patternCanvas, 0, 0);
         }
       } else {
         ctx.fillStyle = "rgba(165,176,139,.58)";
