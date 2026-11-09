@@ -1,74 +1,71 @@
 # Surface Analyzer
 
-Independent SaaS platform for visualizing tile materials in real spaces.
+Tile-first surface visualization SaaS. This repository currently contains the first local MVP workflow for managing tile materials and previewing a material inside a manually outlined region of a room photograph.
 
-**Current stage:** Foundation scaffold (0.1.0). This is an active development starter, not a production-ready application.
+## MVP features
+- Create and switch between visualization projects.
+- Upload room photographs (JPG, PNG, WebP; 15 MB limit).
+- Create a tile/material library with dimensions, finish, SKU, and optional texture image.
+- Select a tile material and outline a wall or floor by clicking polygon points on the room photo.
+- Preview the repeating material texture inside the selected polygon, with scale and opacity controls.
+- Persistent PostgreSQL records and a Docker volume for uploaded files.
 
-## Product direction
-- Tile-first initial market, with independent SaaS branding.
-- Hybrid rendering: deterministic geometry-based material mapping plus AI-assisted surface understanding.
-- Both uploaded-photo visualization and live-camera preview in the V1 product scope.
-- Self-hosted deployment, API-first modular monolith, and separately scalable workers as usage grows.
+**Not in this MVP yet:** account registration, production tenant isolation, automatic AI surface detection, perspective correction, high-fidelity lighting/shadows, live camera AR, billing, and production hardening. The first polygon renderer is a manual 2D texture preview, not a physically accurate architectural renderer.
 
-## Repository structure
-```
-apps/
-  api/                 FastAPI service
-    app/                API application
-    tests/              API tests
-  web/                 Next.js application
-docs/                  Architecture and product decisions
-docker-compose.yml     Local infrastructure and app services
-.env.example           Local environment variable reference
-```
+## Stack
+- Next.js + TypeScript frontend
+- FastAPI + SQLAlchemy + Alembic API
+- PostgreSQL database
+- Redis infrastructure (reserved for background jobs)
+- MinIO infrastructure (object-storage integration is a follow-on; MVP uploads use a persistent local Docker volume)
+- Docker Compose local environment
 
-## Quick start
-Requirements: Docker Desktop with Compose.
+## Run locally
+Requirements: Docker Desktop with Docker Compose.
 
-1. Copy `.env.example` to `.env` and replace the development credentials.
-2. Start the stack:
+1. Clone the repository.
+2. Copy `.env.example` to `.env`. Change the development passwords before sharing the environment.
+3. Start the services:
 
    ```bash
    docker compose up --build
    ```
 
-3. Open:
-   - Web workspace: http://localhost:3000
+   The API container applies Alembic migrations automatically before starting.
+4. Open:
+   - Studio: http://localhost:3000
    - API: http://localhost:8000
    - API docs: http://localhost:8000/docs
    - MinIO console: http://localhost:9001
 
-The initial compose file uses local development credentials. Do not expose this stack to the public internet or reuse these credentials in production.
+The default Compose credentials are for local development only. Never expose this configuration directly to the public internet.
 
-## Local development without Docker
-API:
-```bash
-cd apps/api
-python -m venv .venv
-# activate the virtual environment
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+## First-use workflow
+1. Create a project in the left panel.
+2. Open the project and upload a room photograph.
+3. Add a tile material and upload a close-up texture image.
+4. Select the material, then click at least three points around the target floor or wall surface.
+5. Adjust tile scale and opacity. Clear or undo points to refine the outline.
+
+## Repository layout
+```
+apps/
+  api/
+    app/                 FastAPI routes and SQLAlchemy models
+    migrations/          Alembic schema migrations
+    tests/               API tests
+  web/
+    app/                 Next.js studio and photo visualizer
+docs/
+  ARCHITECTURE.md
+docker-compose.yml
+.env.example
 ```
 
-Web:
-```bash
-cd apps/web
-npm install
-npm run dev
-```
-
-## Current implementation
-- Initial product landing/workspace shell.
-- FastAPI service with health and capability endpoints.
-- Docker Compose development stack for PostgreSQL, Redis, MinIO, API, and web.
-- Initial architecture and implementation direction.
-
-## Next milestones
-1. Persistence foundation: SQLAlchemy models, Alembic migrations, tenant isolation.
-2. Authentication and tenant-aware RBAC.
-3. Tile catalog and material asset management.
-4. Project creation, image uploads, and asset storage.
-5. Surface annotation and perspective geometry.
-6. Deterministic tile renderer, then camera preview.
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the architecture baseline.
+## Development roadmap
+1. Add automated API and frontend build checks; verify the compose stack end-to-end.
+2. Improve polygon editing and texture scale/rotation controls.
+3. Add perspective-aware rendering and room lighting preservation.
+4. Add authentication and enforce tenant isolation before multi-customer deployment.
+5. Integrate AI surface suggestions and object-aware masking.
+6. Integrate live camera preview, then billing, embed SDK, and production operations.
