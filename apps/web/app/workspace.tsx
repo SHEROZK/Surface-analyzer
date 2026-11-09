@@ -144,7 +144,7 @@ export default function Workspace() {
       const response = await fetch(API + "/api/v1/products", { method: "POST", body: form });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "Could not save tile");
-      event.currentTarget.reset(); await refresh(); setSelectedProduct(result.id); setMessage("Tile added to your material library.");
+      formElement.reset(); await refresh(); setSelectedProduct(result.id); setMessage("Tile added to your material library.");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Tile creation failed."); }
     finally { setBusy(false); }
   }
