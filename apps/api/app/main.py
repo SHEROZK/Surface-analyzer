@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db import Base, SessionLocal, engine
-from .models import Project, ProjectAsset, Tenant, TileProduct
+from .models import ProductAsset, Project, ProjectAsset, Tenant, TileProduct
 
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/data/uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -89,11 +89,22 @@ async def capabilities():
 def list_products(db: Session = Depends(get_db)):
     tenant = get_default_tenant(db)
     products = db.scalars(select(TileProduct).where(TileProduct.tenant_id == tenant.id).order_by(TileProduct.created_at.desc())).all()
-    return [{
-        "id": str(p.id), "name": p.name, "sku": p.sku, "description": p.description,
-        "width_mm": p.width_mm, "height_mm": p.height_mm, "finish": p.finish,
-        "material_url": f"/uploads/{p.material_asset_key}" if p.material_asset_key else None,
-    } for p in products]
+    return [serialize_product(p) for p in products]
+
+
+def serialize_product(product: TileProduct):
+    assets = [{
+        "id": str(asset.id), "role": asset.role, "url": "/uploads/" + asset.storage_key,
+        "name": asset.original_name, "mime_type": asset.mime_type, "sort_order": asset.sort_order,
+    } for asset in product.assets]
+    texture = next((a["url"] for a in assets if a["role"] == "texture"), None)
+    legacy_texture = "/uploads/" + product.material_asset_key if product.material_asset_key else None
+    return {
+        "id": str(product.id), "name": product.name, "sku": product.sku, "description": product.description,
+        "category": product.category, "brand": product.brand, "collection": product.collection,
+        "width_mm": product.width_mm, "height_mm": product.height_mm, "finish": product.finish,
+        "material_url": texture or legacy_texture, "assets": assets,
+    }
 
 
 @app.post("/api/v1/products", tags=["catalog"])
@@ -104,7 +115,14 @@ async def create_product(
     width_mm: int | None = Form(None),
     height_mm: int | None = Form(None),
     finish: str | None = Form(None),
+    category: str = Form("tile"),
+    brand: str | None = Form(None),
+    collection: str | None = Form(None),
     material: UploadFile | None = File(None),
+    texture: UploadFile | None = File(None),
+    gallery: list[UploadFile] | None = File(None),
+    normal_map: UploadFile | None = File(None),
+    roughness_map: UploadFile | None = File(None),
     db: Session = Depends(get_db),
 ):
     name = name.strip()
@@ -113,20 +131,40 @@ async def create_product(
     if width_mm is not None and width_mm <= 0 or height_mm is not None and height_mm <= 0:
         raise HTTPException(status_code=422, detail="Tile dimensions must be positive.")
     tenant = get_default_tenant(db)
-    material_key = None
-    if material is not None:
-        material_key, _ = await save_image(material)
+    allowed_categories = {"tile", "natural-stone", "wood-flooring", "wallpaper", "countertop", "paint", "panel", "paver", "other"}
+    category = category.strip().lower()
+    if category not in allowed_categories:
+        raise HTTPException(status_code=422, detail="Unsupported material category.")
     product = TileProduct(
         tenant_id=tenant.id, name=name, sku=sku or None, description=description or None,
+        category=category, brand=brand or None, collection=collection or None,
         width_mm=width_mm, height_mm=height_mm, finish=finish or None,
-        material_asset_key=material_key,
     )
     db.add(product)
+    db.flush()
+    uploads = []
+    if texture is not None:
+        uploads.append(("texture", texture))
+    elif material is not None:
+        uploads.append(("texture", material))
+    if gallery:
+        uploads.extend(("gallery", image) for image in gallery)
+    if normal_map is not None:
+        uploads.append(("normal", normal_map))
+    if roughness_map is not None:
+        uploads.append(("roughness", roughness_map))
+    for order, (role, upload) in enumerate(uploads):
+        key, size = await save_image(upload)
+        db.add(ProductAsset(
+            product_id=product.id, role=role, storage_key=key,
+            original_name=(upload.filename or "")[:255], mime_type=upload.content_type,
+            sort_order=order, metadata_json={"size_bytes": size},
+        ))
+        if role == "texture":
+            product.material_asset_key = key
     db.commit()
     db.refresh(product)
-    return {"id": str(product.id), "name": product.name, "sku": product.sku, "width_mm": product.width_mm,
-            "height_mm": product.height_mm, "finish": product.finish,
-            "material_url": f"/uploads/{material_key}" if material_key else None}
+    return serialize_product(product)
 
 
 @app.delete("/api/v1/products/{product_id}", tags=["catalog"])
