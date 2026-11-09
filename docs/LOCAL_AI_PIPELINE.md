@@ -12,10 +12,20 @@ Surface Analyzer includes an optional, customer-hosted monocular depth inference
 
 ## Enable
 
+### Docker Compose installation
+
+1. Set `INSTALL_AI=true` in the installation `.env` file.
+2. Rebuild and restart the API: `docker compose -f docker-compose.production.yml build api` then `docker compose -f docker-compose.production.yml up -d api`.
+3. Open Studio, select a project with a room photo, and choose **AI depth analysis**. The first run downloads the model into the persistent `api_models` volume and therefore requires internet access. Later runs use the local cache.
+
+### Direct Python installation
+
 1. In `apps/api`, install base requirements, then `pip install -r requirements-ai.txt`.
 2. For NVIDIA acceleration, install a CUDA-enabled PyTorch build compatible with the host driver before installing the remaining AI requirements. Standard CPU PyTorch will run on CPU.
-3. Set `HF_HOME` to a customer-controlled persistent directory (production Compose uses `/data/models`).
-4. Restart API and call authenticated `POST /api/v1/projects/{project_id}/analyze-depth`.
+3. Set `HF_HOME` to a customer-controlled persistent directory.
+4. Call authenticated `POST /api/v1/projects/{project_id}/analyze-depth`.
+
+The Studio button displays the returned depth map. The Docker image currently auto-selects CUDA only if the container runtime exposes an NVIDIA CUDA device and the installed PyTorch build supports it; otherwise it uses CPU.
 
 The response contains a normalized grayscale depth map as a PNG data URL, dimensions, device, and model identifier.
 
