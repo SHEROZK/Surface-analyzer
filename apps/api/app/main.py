@@ -1,6 +1,7 @@
 import os
 import uuid
 import mimetypes
+import base64
 from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
@@ -159,7 +160,8 @@ async def capabilities():
     return [
         {"id": "catalog", "name": "Multi-category surface catalog", "status": "available", "description": "Manage tiles, stone, wood, wallpaper, countertops, paint, panels and pavers with multiple product assets."},
         {"id": "projects", "name": "Visualization projects", "status": "available", "description": "Create projects and upload room photographs."},
-        {"id": "surface-analysis", "name": "Surface segmentation", "status": "hybrid-mvp", "description": "OpenCV heuristic fallback plus an optional ONNX model-provider interface for editable floor and wall masks. A trained model must be supplied separately."},
+        {"id": "surface-analysis", "name": "Surface segmentation", "status": "hybrid-mvp", "description": "OpenCV heuristic fallback plus an optional ONNX segmentation model adapter. A trained semantic model must be supplied separately."},
+        {"id": "ai-depth", "name": "Local AI depth estimation", "status": "optional-local-model", "description": "Depth Anything V2 Small estimates relative scene depth locally when optional AI dependencies are installed; it is not semantic segmentation or metric geometry."},
         {"id": "photo-renderer", "name": "Photo renderer", "status": "mvp", "description": "Preview material textures inside an automatically detected or manually refined surface polygon; perspective-aware rendering is in development."},
         {"id": "camera-preview", "name": "Live camera preview", "status": "planned", "description": "Live camera material preview is planned after the photo workflow."},
     ]
@@ -355,6 +357,44 @@ def detect_surface(project_id: uuid.UUID, mode: str = "floor", current_user: Use
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Automatic detection failed: {str(exc)[:160]}")
+
+
+@app.post("/api/v1/projects/{project_id}/analyze-depth", tags=["surface-analysis"])
+def analyze_room_depth(project_id: uuid.UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Run customer-hosted monocular depth inference on the latest room photo."""
+    project = db.scalar(select(Project).where(Project.id == project_id, Project.tenant_id == current_user.tenant_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    room_asset = db.scalar(select(ProjectAsset).where(
+        ProjectAsset.project_id == project.id, ProjectAsset.asset_type == "room"
+    ).order_by(ProjectAsset.created_at.desc()))
+    if room_asset is None:
+        raise HTTPException(status_code=404, detail="Upload a room photo first.")
+    try:
+        import cv2
+        from .depth_estimation import DepthEstimationUnavailable, get_depth_estimator
+        image = cv2.imread(str(UPLOAD_DIR / room_asset.storage_key))
+        if image is None:
+            raise HTTPException(status_code=422, detail="Room image could not be decoded.")
+        depth = get_depth_estimator().predict(image)
+        ok, encoded = cv2.imencode(".png", depth)
+        if not ok:
+            raise HTTPException(status_code=500, detail="Could not encode the depth map.")
+        return {
+            "model": "depth-anything-v2-small",
+            "device": get_depth_estimator().device,
+            "width": int(depth.shape[1]),
+            "height": int(depth.shape[0]),
+            "depth_map": "data:image/png;base64," + base64.b64encode(encoded.tobytes()).decode("ascii"),
+            "depth_type": "relative",
+            "warnings": ["Relative depth is not a real-world measurement.", "Depth estimation is not a floor/wall semantic mask. Review surface boundaries manually."],
+        }
+    except HTTPException:
+        raise
+    except DepthEstimationUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Local depth inference failed: {str(exc)[:180]}")
 
 
 @app.get("/api/v1/projects/{project_id}", tags=["projects"])
