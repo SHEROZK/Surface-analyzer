@@ -8,12 +8,13 @@ Self-hosted surface visualization software for tiles and other architectural fin
 - Create a catalog for tiles, natural stone, wood/flooring, wallpaper, countertops, paint/coatings, panels, pavers and other surfaces.
 - Store brand, collection, SKU, dimensions, finish, a primary seamless texture, multiple gallery images, and optional normal/roughness maps as separate product assets.
 - Propose floor and wall boundaries using OpenCV, then refine the editable polygons manually.
-- Optionally connect a trained ONNX segmentation model through a documented provider contract.
+- Optional local AI depth analysis using Depth Anything V2 Small (Apache-2.0), with a Studio preview of relative scene depth.
+- Optionally connect a trained ONNX semantic-segmentation model through a documented provider contract.
 - Drag materials onto detected floor or wall regions, with a live drop-target highlight.
 - Preview the repeating material texture inside the selected polygon, with scale and opacity controls.
 - Persistent PostgreSQL records and a Docker volume for uploaded files.
 
-**Important limitations:** The default detector is a heuristic OpenCV GrabCut proposal, not semantic AI segmentation; furniture and rugs may be included in its mask. The ONNX adapter is only an integration interface: no trained model weights are bundled. To enable it, install `onnxruntime` in the API image and set `SURFACE_SEGMENTATION_MODEL` to a compatible model file. The model must accept float32 NCHW `[1,4,H,W]` input (RGB 0–1 plus a mode plane: 0=floor, 1=wall) and return `[1,1,H,W]` probabilities or logits. Without that file, the API uses the OpenCV fallback. Perspective-correct material projection, physically based lighting/shadows, live camera AR, billing, and production hardening remain outstanding. The current renderer is still a 2D repeated-texture preview and must not be presented as a photorealistic final render. The first polygon renderer is a manual 2D texture preview, not a physically accurate architectural renderer.
+**Important limitations:** The default floor/wall detector is a heuristic OpenCV GrabCut proposal, not semantic AI segmentation; furniture and rugs may be included in its mask. The AI depth model estimates relative depth only and does not identify floors, walls, furniture, or real-world dimensions. The ONNX segmentation adapter is only an integration interface: no trained semantic model weights are bundled. To enable it, install `onnxruntime` in the API image and set `SURFACE_SEGMENTATION_MODEL` to a compatible model file. The model must accept float32 NCHW `[1,4,H,W]` input (RGB 0–1 plus a mode plane: 0=floor, 1=wall) and return `[1,1,H,W]` probabilities or logits. Without that file, the API uses the OpenCV fallback. Perspective-correct material projection, physically based lighting/shadows, live camera AR, billing, and production hardening remain outstanding. The current renderer is still a 2D repeated-texture preview and must not be presented as a photorealistic final render. The first polygon renderer is a manual 2D texture preview, not a physically accurate architectural renderer.
 
 ## Stack
 - Next.js + TypeScript frontend
