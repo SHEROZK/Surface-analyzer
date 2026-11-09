@@ -86,7 +86,7 @@ async def capabilities():
     return [
         {"id": "catalog", "name": "Multi-category surface catalog", "status": "available", "description": "Manage tiles, stone, wood, wallpaper, countertops, paint, panels and pavers with multiple product assets."},
         {"id": "projects", "name": "Visualization projects", "status": "available", "description": "Create projects and upload room photographs."},
-        {"id": "surface-analysis", "name": "Automatic surface detection", "status": "mvp", "description": "OpenCV proposes editable floor and wall boundaries from room photos; users can refine outlines."},
+        {"id": "surface-analysis", "name": "Surface segmentation", "status": "hybrid-mvp", "description": "OpenCV heuristic fallback plus an optional ONNX model-provider interface for editable floor and wall masks. A trained model must be supplied separately."},
         {"id": "photo-renderer", "name": "Photo renderer", "status": "mvp", "description": "Preview material textures inside an automatically detected or manually refined surface polygon; perspective-aware rendering is in development."},
         {"id": "camera-preview", "name": "Live camera preview", "status": "planned", "description": "Live camera material preview is planned after the photo workflow."},
     ]
