@@ -77,10 +77,10 @@ async def health():
 @app.get("/api/v1/capabilities", tags=["platform"])
 async def capabilities():
     return [
-        {"id": "catalog", "name": "Tile catalog", "status": "available", "description": "Create and manage tile products and material images."},
+        {"id": "catalog", "name": "Multi-category surface catalog", "status": "available", "description": "Manage tiles, stone, wood, wallpaper, countertops, paint, panels and pavers with multiple product assets."},
         {"id": "projects", "name": "Visualization projects", "status": "available", "description": "Create projects and upload room photographs."},
         {"id": "surface-analysis", "name": "Surface selection", "status": "mvp", "description": "Manually outline the target surface in the visualizer."},
-        {"id": "photo-renderer", "name": "Photo renderer", "status": "mvp", "description": "Preview a repeating tile texture inside a selected polygon."},
+        {"id": "photo-renderer", "name": "Photo renderer", "status": "mvp", "description": "Preview a repeating material texture inside a manually selected polygon; perspective-aware rendering is still in development."},
         {"id": "camera-preview", "name": "Live camera preview", "status": "planned", "description": "Live camera material preview is planned after the photo workflow."},
     ]
 
