@@ -162,18 +162,19 @@ def _model_proposal(image: np.ndarray, mode: str, provider) -> dict:
         if class_map.shape != image.shape[:2] or confidence_map.shape != image.shape[:2]:
             raise SurfaceDetectionError("Segmentation provider returned inconsistent scene-map dimensions.")
         occlusions = _occlusion_proposals(class_map, confidence_map, scene["id2label"])
-        if occlusions:
-            from .segmentation_provider import DEFAULT_OCCLUSION_LABELS, normalize_label
-            configured = os.getenv("SURFACE_OCCLUSION_LABELS", "").strip()
-            occlusion_names = (
-                {normalize_label(item) for item in configured.split(",") if item.strip()}
-                if configured else DEFAULT_OCCLUSION_LABELS
-            )
-            occluder_ids = [int(class_id) for class_id, name in scene["id2label"].items()
-                            if normalize_label(name) in occlusion_names]
-            if occluder_ids:
-                probabilities = probabilities.copy()
-                probabilities[np.isin(class_map, occluder_ids)] = 0.0
+        from .segmentation_provider import DEFAULT_OCCLUSION_LABELS, normalize_label
+        configured = os.getenv("SURFACE_OCCLUSION_LABELS", "").strip()
+        occlusion_names = (
+            {normalize_label(item) for item in configured.split(",") if item.strip()}
+            if configured else DEFAULT_OCCLUSION_LABELS
+        )
+        occluder_ids = [int(class_id) for class_id, name in scene["id2label"].items()
+                        if normalize_label(name) in occlusion_names]
+        if occluder_ids:
+            probabilities = probabilities.copy()
+            # Exclude every pixel of an occluder class, even when a small object
+            # is too small to be emitted as a separate polygon proposal.
+            probabilities[np.isin(class_map, occluder_ids)] = 0.0
 
     binary = (probabilities >= 0.5).astype(np.uint8) * 255
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
