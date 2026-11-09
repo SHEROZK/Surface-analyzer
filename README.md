@@ -1,16 +1,17 @@
 # Surface Analyzer
 
-Tile-first surface visualization SaaS. This repository currently contains the first local MVP workflow for managing tile materials and previewing a material inside a manually outlined region of a room photograph.
+Surface visualization SaaS for tiles and other architectural finishes. The local MVP supports a multi-category material catalog and previews a selected material inside a manually outlined region of a room photograph.
 
 ## MVP features
 - Create and switch between visualization projects.
 - Upload room photographs (JPG, PNG, WebP; 15 MB limit).
-- Create a tile/material library with dimensions, finish, SKU, and optional texture image.
+- Create a catalog for tiles, natural stone, wood/flooring, wallpaper, countertops, paint/coatings, panels, pavers and other surfaces.
+- Store brand, collection, SKU, dimensions, finish, a primary seamless texture, multiple gallery images, and optional normal/roughness maps as separate product assets.
 - Select a tile material and outline a wall or floor by clicking polygon points on the room photo.
 - Preview the repeating material texture inside the selected polygon, with scale and opacity controls.
 - Persistent PostgreSQL records and a Docker volume for uploaded files.
 
-**Not in this MVP yet:** account registration, production tenant isolation, automatic AI surface detection, perspective correction, high-fidelity lighting/shadows, live camera AR, billing, and production hardening. The first polygon renderer is a manual 2D texture preview, not a physically accurate architectural renderer.
+**Not in this MVP yet:** account registration, production tenant isolation, automatic AI surface detection, perspective-correct material projection, physically based lighting/shadows, live camera AR, billing, and production hardening. The current renderer is still a 2D repeated-texture preview and must not be presented as a photorealistic final render. The first polygon renderer is a manual 2D texture preview, not a physically accurate architectural renderer.
 
 ## Stack
 - Next.js + TypeScript frontend
@@ -43,7 +44,7 @@ The default Compose credentials are for local development only. Never expose thi
 ## First-use workflow
 1. Create a project in the left panel.
 2. Open the project and upload a room photograph.
-3. Add a tile material and upload a close-up texture image.
+3. Add a surface product, choose its category, and upload a seamless texture plus any gallery/maps available.
 4. Select the material, then click at least three points around the target floor or wall surface.
 5. Adjust tile scale and opacity. Clear or undo points to refine the outline.
 
@@ -64,8 +65,8 @@ docker-compose.yml
 
 ## Development roadmap
 1. Add automated API and frontend build checks; verify the compose stack end-to-end.
-2. Improve polygon editing and texture scale/rotation controls.
-3. Add perspective-aware rendering and room lighting preservation.
+2. Improve polygon editing and build a deterministic perspective-aware renderer with grout, tile layouts, rotation, and room-light preservation.
+3. Add AI-assisted room segmentation, occlusion, and object-aware masks.
 4. Add authentication and enforce tenant isolation before multi-customer deployment.
 5. Integrate AI surface suggestions and object-aware masking.
 6. Integrate live camera preview, then billing, embed SDK, and production operations.
