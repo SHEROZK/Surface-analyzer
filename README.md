@@ -7,11 +7,13 @@ Surface visualization SaaS for tiles and other architectural finishes. The local
 - Upload room photographs (JPG, PNG, WebP; 15 MB limit).
 - Create a catalog for tiles, natural stone, wood/flooring, wallpaper, countertops, paint/coatings, panels, pavers and other surfaces.
 - Store brand, collection, SKU, dimensions, finish, a primary seamless texture, multiple gallery images, and optional normal/roughness maps as separate product assets.
-- Select a tile material and outline a wall or floor by clicking polygon points on the room photo.
+- Propose floor and wall boundaries using OpenCV, then refine the editable polygons manually.
+- Optionally connect a trained ONNX segmentation model through a documented provider contract.
+- Drag materials onto detected floor or wall regions, with a live drop-target highlight.
 - Preview the repeating material texture inside the selected polygon, with scale and opacity controls.
 - Persistent PostgreSQL records and a Docker volume for uploaded files.
 
-**Not in this MVP yet:** account registration, production tenant isolation, automatic AI surface detection, perspective-correct material projection, physically based lighting/shadows, live camera AR, billing, and production hardening. The current renderer is still a 2D repeated-texture preview and must not be presented as a photorealistic final render. The first polygon renderer is a manual 2D texture preview, not a physically accurate architectural renderer.
+**Important limitations:** The default detector is a heuristic OpenCV GrabCut proposal, not semantic AI segmentation; furniture and rugs may be included in its mask. The ONNX adapter is only an integration interface: no trained model weights are bundled. To enable it, install `onnxruntime` in the API image and set `SURFACE_SEGMENTATION_MODEL` to a compatible model file. The model must accept float32 NCHW `[1,4,H,W]` input (RGB 0–1 plus a mode plane: 0=floor, 1=wall) and return `[1,1,H,W]` probabilities or logits. Without that file, the API uses the OpenCV fallback. Perspective-correct material projection, physically based lighting/shadows, live camera AR, billing, and production hardening remain outstanding. The current renderer is still a 2D repeated-texture preview and must not be presented as a photorealistic final render. The first polygon renderer is a manual 2D texture preview, not a physically accurate architectural renderer.
 
 ## Stack
 - Next.js + TypeScript frontend
