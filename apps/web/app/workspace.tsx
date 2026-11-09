@@ -139,8 +139,9 @@ export default function Workspace() {
 
   async function createProduct(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setMessage("");
+    const formElement = event.currentTarget;
     try {
-      const form = new FormData(event.currentTarget);
+      const form = new FormData(formElement);
       const response = await fetch(API + "/api/v1/products", { method: "POST", body: form });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "Could not save tile");
