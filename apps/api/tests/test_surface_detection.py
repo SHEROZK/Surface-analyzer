@@ -57,3 +57,44 @@ def test_wall_detector_returns_normalized_polygon_for_simple_room():
     for point in result["points"]:
         assert 0.0 <= point["x"] <= 1.0
         assert 0.0 <= point["y"] <= 1.0
+
+
+class FakeSegmentationProvider:
+    name = "test-model"
+
+    def predict(self, image, mode):
+        mask = np.zeros(image.shape[:2], dtype=np.float32)
+        if mode == "floor":
+            mask[int(image.shape[0] * .55):, :] = 0.95
+        else:
+            mask[int(image.shape[0] * .2):int(image.shape[0] * .75), int(image.shape[1] * .1):int(image.shape[1] * .9)] = 0.95
+        return mask
+
+
+def test_model_provider_generates_floor_boundary():
+    image = np.zeros((300, 420, 3), dtype=np.uint8)
+    result = detect_floor_boundary(image, FakeSegmentationProvider())
+    assert result["method"] == "test-model-floor-v1"
+    assert result["area_ratio"] > 0.3
+    assert len(result["points"]) >= 3
+    assert any("Model-generated" in warning for warning in result["warnings"])
+
+
+def test_model_provider_generates_wall_boundary():
+    from app.surface_detection import detect_wall_boundary
+
+    image = np.zeros((360, 480, 3), dtype=np.uint8)
+    result = detect_wall_boundary(image, FakeSegmentationProvider())
+    assert result["method"] == "test-model-wall-v1"
+    assert result["area_ratio"] > 0.3
+    assert len(result["points"]) >= 3
+
+
+def test_model_provider_rejects_invalid_probability_mask():
+    class InvalidProvider:
+        def predict(self, image, mode):
+            return np.full((image.shape[0], image.shape[1]), np.nan, dtype=np.float32)
+
+    image = np.zeros((300, 420, 3), dtype=np.uint8)
+    with pytest.raises(SurfaceDetectionError, match="invalid probability"):
+        detect_floor_boundary(image, InvalidProvider())
