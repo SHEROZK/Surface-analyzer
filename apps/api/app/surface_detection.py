@@ -104,9 +104,56 @@ def _grabcut_proposal(image: np.ndarray, mode: str) -> dict:
             "method": f"opencv-grabcut-{mode}-prior-v1", "warnings": warnings}
 
 
-def detect_floor_boundary(image: np.ndarray) -> dict:
-    return _grabcut_proposal(image, "floor")
+def _model_proposal(image: np.ndarray, mode: str, provider) -> dict:
+    image = _validate_and_resize(image)
+    probabilities = provider.predict(image, mode)
+    if not isinstance(probabilities, np.ndarray) or probabilities.ndim != 2:
+        raise SurfaceDetectionError("Segmentation provider must return a two-dimensional probability mask.")
+    if probabilities.shape != image.shape[:2]:
+        probabilities = cv2.resize(probabilities.astype(np.float32), (image.shape[1], image.shape[0]), interpolation=cv2.INTER_LINEAR)
+    if not np.isfinite(probabilities).all():
+        raise SurfaceDetectionError("Segmentation provider returned invalid probability values.")
+    binary = (probabilities >= 0.5).astype(np.uint8) * 255
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
+    candidates = []
+    h, w = binary.shape
+    for label in range(1, count):
+        x, y, cw, ch, area = stats[label]
+        if area < h * w * (0.025 if mode == "floor" else 0.04):
+            continue
+        if mode == "floor" and y + ch < int(h * 0.85):
+            continue
+        if mode == "wall":
+            cx, cy = x + cw / 2, y + ch / 2
+            if not (w * .08 < cx < w * .92 and h * .12 < cy < h * .88):
+                continue
+        candidates.append((int(area), label))
+    if not candidates:
+        raise SurfaceDetectionError(f"The segmentation model did not find a usable {mode} region. Refine the outline manually.")
+    area, label = max(candidates)
+    component = np.where(labels == label, 255, 0).astype(np.uint8)
+    contours, _ = cv2.findContours(component, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contour = max(contours, key=cv2.contourArea)
+    perimeter = cv2.arcLength(contour, True)
+    approx = cv2.approxPolyDP(contour, max(2.0, perimeter * .006), True).reshape(-1, 2)
+    if len(approx) > 32:
+        approx = cv2.approxPolyDP(contour, max(3.0, perimeter * .012), True).reshape(-1, 2)
+    if len(approx) < 3:
+        raise SurfaceDetectionError("The segmentation model produced an unusable boundary.")
+    points = [{"x": round(float(x) / w, 5), "y": round(float(y) / h, 5)} for x, y in approx]
+    return {
+        "points": points, "confidence": round(float(np.mean(probabilities[component > 0])), 2),
+        "area_ratio": round(float(area) / float(h * w), 3),
+        "method": f"{provider.name}-{mode}-v1",
+        "warnings": ["Model-generated boundary: review furniture edges, rugs, fixtures and reflections before applying material."],
+    }
 
 
-def detect_wall_boundary(image: np.ndarray) -> dict:
-    return _grabcut_proposal(image, "wall")
+def detect_floor_boundary(image: np.ndarray, provider=None) -> dict:
+    return _model_proposal(image, "floor", provider) if provider is not None else _grabcut_proposal(image, "floor")
+
+
+def detect_wall_boundary(image: np.ndarray, provider=None) -> dict:
+    return _model_proposal(image, "wall", provider) if provider is not None else _grabcut_proposal(image, "wall")
