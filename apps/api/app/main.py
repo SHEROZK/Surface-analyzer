@@ -36,6 +36,15 @@ class LoginRequest(BaseModel):
     email: str = Field(min_length=5, max_length=320)
     password: str = Field(min_length=1, max_length=128)
 
+class SurfacePromptPoint(BaseModel):
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+    label: int = Field(default=1, ge=0, le=1)
+
+
+class SurfacePromptRequest(BaseModel):
+    points: list[SurfacePromptPoint] = Field(min_length=1, max_length=24)
+
 
 def get_db():
     db = SessionLocal()
@@ -362,6 +371,50 @@ def detect_surface(project_id: uuid.UUID, mode: str = "floor", current_user: Use
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Automatic detection failed: {str(exc)[:160]}")
+
+
+@app.post("/api/v1/projects/{project_id}/refine-surface", tags=["surface-analysis"])
+def refine_surface_with_points(
+    project_id: uuid.UUID,
+    payload: SurfacePromptRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Use locally hosted SAM 2 point prompts to create an editable surface outline."""
+    if not any(point.label == 1 for point in payload.points):
+        raise HTTPException(status_code=422, detail="Add at least one positive point on the surface.")
+    project = db.scalar(select(Project).where(
+        Project.id == project_id, Project.tenant_id == current_user.tenant_id
+    ))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    room_asset = db.scalar(select(ProjectAsset).where(
+        ProjectAsset.project_id == project.id, ProjectAsset.asset_type == "room"
+    ).order_by(ProjectAsset.created_at.desc()))
+    if room_asset is None:
+        raise HTTPException(status_code=404, detail="Upload a room photo first.")
+    try:
+        import cv2
+        from .sam2_refinement import get_sam2_refiner
+        refiner = get_sam2_refiner()
+        if refiner is None:
+            raise HTTPException(
+                status_code=503,
+                detail="SAM 2 point refinement is not configured. Set SURFACE_SAM2_CONFIG and SURFACE_SAM2_CHECKPOINT to local model files, or use the manual polygon tools.",
+            )
+        image = cv2.imread(str(UPLOAD_DIR / room_asset.storage_key))
+        if image is None:
+            raise HTTPException(status_code=422, detail="Room image could not be decoded.")
+        points = [point.model_dump() for point in payload.points]
+        return refiner.refine_points(image, points)
+    except HTTPException:
+        raise
+    except ImportError:
+        raise HTTPException(status_code=503, detail="SAM 2 dependencies are not installed. Install apps/api/requirements-sam2.txt.")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=f"Local SAM 2 refinement failed: {str(exc)[:180]}")
 
 
 @app.post("/api/v1/projects/{project_id}/analyze-depth", tags=["surface-analysis"])
