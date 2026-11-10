@@ -6,7 +6,8 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 type Product = { id: string; name: string; sku?: string; category?: string; brand?: string; collection?: string; width_mm?: number; height_mm?: number; finish?: string; material_url?: string | null; assets?: {id:string;role:string;url:string;name?:string}[] };
 type Project = { id: string; name: string; status: string; room_image_url?: string | null };
 type Asset = { id: string; type: string; url: string };
-type ProjectDetail = { id: string; name: string; status: string; assets: Asset[] };\ntype VisualizationState = { floor: { outline: Point[]; product_id: string | null; occlusions: Occlusion[] }; wall: { outline: Point[]; product_id: string | null; occlusions: Occlusion[] }; render: { preserve_occlusions: boolean; scale: number; opacity: number; pattern: string; grout_width: number; grout_color: string } };
+type ProjectDetail = { id: string; name: string; status: string; assets: Asset[] };
+type VisualizationState = { floor: { outline: Point[]; product_id: string | null; occlusions: Occlusion[] }; wall: { outline: Point[]; product_id: string | null; occlusions: Occlusion[] }; render: { preserve_occlusions: boolean; scale: number; opacity: number; pattern: string; grout_width: number; grout_color: string } };
 
 type Point = { x: number; y: number };
 type PromptPoint = Point & { label: 0 | 1 };
@@ -130,7 +131,9 @@ export default function Workspace() {
   const [width, setWidth] = useState("600");
   const [height, setHeight] = useState("600");
   const [finish, setFinish] = useState("Matt");
-  const [busy, setBusy] = useState(false);\n  const [savingVisualization, setSavingVisualization] = useState(false);\n  const [visualizationSavedAt, setVisualizationSavedAt] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [savingVisualization, setSavingVisualization] = useState(false);
+  const [visualizationSavedAt, setVisualizationSavedAt] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [points, setPoints] = useState<{x:number;y:number}[]>([]);
   const [surfaceOutlines, setSurfaceOutlines] = useState<{floor: Point[]; wall: Point[]}>({floor: [], wall: []});
@@ -228,7 +231,8 @@ export default function Workspace() {
       setMessage(error instanceof Error ? error.message : "Could not save visualization.");
     } finally { setSavingVisualization(false); }
   }
-\n  const roomUrl = (selectedProject as (ProjectDetail & {room_image_url?: string}) | null)?.room_image_url || null;
+
+  const roomUrl = (selectedProject as (ProjectDetail & {room_image_url?: string}) | null)?.room_image_url || null;
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
