@@ -36,6 +36,49 @@ class LoginRequest(BaseModel):
     email: str = Field(min_length=5, max_length=320)
     password: str = Field(min_length=1, max_length=128)
 
+class SurfacePromptPoint(BaseModel):
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+    label: int = Field(default=1, ge=0, le=1)
+
+
+class SurfacePromptRequest(BaseModel):
+    points: list[SurfacePromptPoint] = Field(min_length=1, max_length=24)
+
+
+class VisualizationPoint(BaseModel):
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+
+
+class VisualizationOcclusion(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    points: list[VisualizationPoint] = Field(min_length=3, max_length=500)
+    confidence: float = Field(ge=0.0, le=1.0)
+    area_ratio: float = Field(ge=0.0, le=1.0)
+    bbox: dict[str, float] | None = None
+
+
+class VisualizationSurfaceState(BaseModel):
+    outline: list[VisualizationPoint] = Field(default_factory=list, max_length=500)
+    product_id: uuid.UUID | None = None
+    occlusions: list[VisualizationOcclusion] = Field(default_factory=list, max_length=100)
+
+
+class VisualizationRenderSettings(BaseModel):
+    preserve_occlusions: bool = True
+    scale: float = Field(default=0.45, ge=0.05, le=2.0)
+    opacity: float = Field(default=0.88, ge=0.0, le=1.0)
+    pattern: str = Field(default="grid", pattern="^(grid|brick|diagonal|herringbone)$")
+    grout_width: float = Field(default=0.012, ge=0.0, le=0.1)
+    grout_color: str = Field(default="#aaa69c", pattern="^#[0-9a-fA-F]{6}$")
+
+
+class ProjectVisualizationState(BaseModel):
+    floor: VisualizationSurfaceState = Field(default_factory=VisualizationSurfaceState)
+    wall: VisualizationSurfaceState = Field(default_factory=VisualizationSurfaceState)
+    render: VisualizationRenderSettings = Field(default_factory=VisualizationRenderSettings)
+
 
 def get_db():
     db = SessionLocal()
@@ -160,9 +203,9 @@ async def capabilities():
     return [
         {"id": "catalog", "name": "Multi-category surface catalog", "status": "available", "description": "Manage tiles, stone, wood, wallpaper, countertops, paint, panels and pavers with multiple product assets."},
         {"id": "projects", "name": "Visualization projects", "status": "available", "description": "Create projects and upload room photographs."},
-        {"id": "surface-analysis", "name": "Surface segmentation", "status": "local-ai-foundation", "description": "Local semantic floor/wall segmentation with object-class occlusion polygons when an approved checkpoint is configured; editable OpenCV fallback otherwise."},
+        {"id": "surface-analysis", "name": "Surface segmentation", "status": "requires-local-model", "description": "Local semantic floor/wall segmentation requires an explicitly configured compatible checkpoint. Automatic heuristic fallback is disabled to prevent false surface proposals; manual outlining remains available."},
         {"id": "ai-depth", "name": "Local AI depth estimation", "status": "optional-local-model", "description": "Depth Anything V2 Small estimates relative scene depth locally when optional AI dependencies are installed; it is not semantic segmentation or metric geometry."},
-        {"id": "photo-renderer", "name": "Photo renderer", "status": "mvp", "description": "Preview material textures inside an automatically detected or manually refined surface polygon; perspective-aware rendering is in development."},
+        {"id": "photo-renderer", "name": "Photo renderer", "status": "projective-preview", "description": "Browser preview uses a subdivided projective homography for planar quadrilateral mapping. Photometric lighting reconstruction, physically based material response, and validated foreground compositing remain unfinished."},
         {"id": "camera-preview", "name": "Live camera preview", "status": "planned", "description": "Live camera material preview is planned after the photo workflow."},
     ]
 
@@ -342,6 +385,11 @@ def detect_surface(project_id: uuid.UUID, mode: str = "floor", current_user: Use
         import cv2
         from .surface_detection import SurfaceDetectionError, detect_floor_boundary, detect_wall_boundary
         provider = get_surface_segmentation_provider()
+        if provider is None:
+            raise HTTPException(
+                status_code=503,
+                detail="AI surface detection is not configured. Use the manual outline for now, or install a compatible local floor/wall segmentation checkpoint. Heuristic auto-detection is disabled because it can select cabinets, shelves, or furniture as a surface.",
+            )
         image = cv2.imread(str(UPLOAD_DIR / room_asset.storage_key))
         if image is None:
             raise HTTPException(status_code=422, detail="Room image could not be decoded.")
@@ -357,6 +405,50 @@ def detect_surface(project_id: uuid.UUID, mode: str = "floor", current_user: Use
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Automatic detection failed: {str(exc)[:160]}")
+
+
+@app.post("/api/v1/projects/{project_id}/refine-surface", tags=["surface-analysis"])
+def refine_surface_with_points(
+    project_id: uuid.UUID,
+    payload: SurfacePromptRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Use locally hosted SAM 2 point prompts to create an editable surface outline."""
+    if not any(point.label == 1 for point in payload.points):
+        raise HTTPException(status_code=422, detail="Add at least one positive point on the surface.")
+    project = db.scalar(select(Project).where(
+        Project.id == project_id, Project.tenant_id == current_user.tenant_id
+    ))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    room_asset = db.scalar(select(ProjectAsset).where(
+        ProjectAsset.project_id == project.id, ProjectAsset.asset_type == "room"
+    ).order_by(ProjectAsset.created_at.desc()))
+    if room_asset is None:
+        raise HTTPException(status_code=404, detail="Upload a room photo first.")
+    try:
+        import cv2
+        from .sam2_refinement import get_sam2_refiner
+        refiner = get_sam2_refiner()
+        if refiner is None:
+            raise HTTPException(
+                status_code=503,
+                detail="SAM 2 point refinement is not configured. Set SURFACE_SAM2_CONFIG and SURFACE_SAM2_CHECKPOINT to local model files, or use the manual polygon tools.",
+            )
+        image = cv2.imread(str(UPLOAD_DIR / room_asset.storage_key))
+        if image is None:
+            raise HTTPException(status_code=422, detail="Room image could not be decoded.")
+        points = [point.model_dump() for point in payload.points]
+        return refiner.refine_points(image, points)
+    except HTTPException:
+        raise
+    except ImportError:
+        raise HTTPException(status_code=503, detail="SAM 2 dependencies are not installed. Install apps/api/requirements-sam2.txt.")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=f"Local SAM 2 refinement failed: {str(exc)[:180]}")
 
 
 @app.post("/api/v1/projects/{project_id}/analyze-depth", tags=["surface-analysis"])
@@ -395,6 +487,39 @@ def analyze_room_depth(project_id: uuid.UUID, current_user: User = Depends(get_c
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Local depth inference failed: {str(exc)[:180]}")
+
+
+@app.get("/api/v1/projects/{project_id}/visualization-state", tags=["projects"])
+def get_visualization_state(project_id: uuid.UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    project = db.scalar(select(Project).where(Project.id == project_id, Project.tenant_id == current_user.tenant_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    raw = (project.settings or {}).get("visualization", {})
+    try:
+        state = ProjectVisualizationState.model_validate(raw)
+    except Exception:
+        state = ProjectVisualizationState()
+    return {"state": state.model_dump(mode="json"), "updated_at": project.updated_at}
+
+
+@app.put("/api/v1/projects/{project_id}/visualization-state", tags=["projects"])
+def save_visualization_state(project_id: uuid.UUID, payload: ProjectVisualizationState, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    project = db.scalar(select(Project).where(Project.id == project_id, Project.tenant_id == current_user.tenant_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    product_ids = {surface.product_id for surface in (payload.floor, payload.wall) if surface.product_id is not None}
+    if product_ids:
+        owned = set(db.scalars(select(TileProduct.id).where(
+            TileProduct.id.in_(product_ids), TileProduct.tenant_id == current_user.tenant_id
+        )).all())
+        if owned != product_ids:
+            raise HTTPException(status_code=422, detail="A selected material does not belong to this workspace.")
+    settings = dict(project.settings or {})
+    settings["visualization"] = payload.model_dump(mode="json")
+    project.settings = settings
+    db.commit()
+    db.refresh(project)
+    return {"state": payload.model_dump(mode="json"), "updated_at": project.updated_at}
 
 
 @app.get("/api/v1/projects/{project_id}", tags=["projects"])

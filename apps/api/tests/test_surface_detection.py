@@ -74,10 +74,10 @@ class FakeSegmentationProvider:
 def test_model_provider_generates_floor_boundary():
     image = np.zeros((300, 420, 3), dtype=np.uint8)
     result = detect_floor_boundary(image, FakeSegmentationProvider())
-    assert result["method"] == "test-model-floor-v1"
+    assert result["method"] == "test-model-floor-v2"
     assert result["area_ratio"] > 0.3
     assert len(result["points"]) >= 3
-    assert any("Model-generated" in warning for warning in result["warnings"])
+    assert any("AI-generated" in warning for warning in result["warnings"])
 
 
 def test_model_provider_generates_wall_boundary():
@@ -85,7 +85,7 @@ def test_model_provider_generates_wall_boundary():
 
     image = np.zeros((360, 480, 3), dtype=np.uint8)
     result = detect_wall_boundary(image, FakeSegmentationProvider())
-    assert result["method"] == "test-model-wall-v1"
+    assert result["method"] == "test-model-wall-v2"
     assert result["area_ratio"] > 0.3
     assert len(result["points"]) >= 3
 
