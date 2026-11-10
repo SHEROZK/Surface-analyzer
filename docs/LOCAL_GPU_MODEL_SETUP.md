@@ -15,6 +15,13 @@ Do not download a random ADE20K SegFormer/OneFormer checkpoint and assume it is 
 
 SAM 2.1 checkpoints are Apache-2.0 according to Meta's official repository. SAM 2 is a promptable mask refiner, not a semantic floor/wall classifier. It needs a point/box prompt or a separate model to propose the object/surface.
 
+## Model candidates reviewed (10 Nov 2026)
+
+- **Pictograph PG-SceneParse150-2XL:** technically relevant because its published class list includes floor, wall, cabinet, shelf, rug, furniture, doors, and fixtures, and its model page lists BSD-3-Clause for the model. However, its model card says it was trained on ADE-20K; the associated dataset page states that the images are limited to non-commercial research/education unless separate permission is obtained. The model is therefore **not approved for this commercial SaaS** without written rights clearance for the training data and resulting weights. Do not download or deploy it as the production checkpoint.
+- **SAM 2.1:** approved for the interactive prompt-refinement role under Apache-2.0 according to Meta's repository, but it does not semantically distinguish floor from wall. It remains a separate component, not the missing scene parser.
+
+The current decision is to keep semantic auto-detection disabled until we have either (a) a model trained on commercially cleared data with documented rights, or (b) a written commercial license covering the checkpoint and its training data. A practical route is to assemble a rights-cleared, consented tile-room photo dataset and train/validate a compact floor/wall/object segmentation model against it.
+
 ## Recommended architecture
 
 1. **Surface proposal model:** choose or train a commercially cleared indoor-scene model with explicit floor, wall, cabinet, shelving, rug, furniture, door, window, and fixture classes. It must expose a compatible `id2label` containing `floor` and `wall` for the current Transformers adapter.
