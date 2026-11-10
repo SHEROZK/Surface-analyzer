@@ -9,6 +9,7 @@ type Asset = { id: string; type: string; url: string };
 type ProjectDetail = { id: string; name: string; status: string; assets: Asset[] };
 
 type Point = { x: number; y: number };
+type PromptPoint = Point & { label: 0 | 1 };
 type Quad = [Point, Point, Point, Point];
 type Occlusion = { label: string; points: Point[]; confidence: number; area_ratio: number; bbox?: { x: number; y: number; width: number; height: number } };
 
@@ -138,6 +139,10 @@ export default function Workspace() {
   const [detectionConfidence, setDetectionConfidence] = useState<number | null>(null);
   const [detectionWarnings, setDetectionWarnings] = useState<string[]>([]);
   const [detecting, setDetecting] = useState(false);
+  const [sam2PromptMode, setSam2PromptMode] = useState(false);
+  const [promptLabel, setPromptLabel] = useState<0 | 1>(1);
+  const [promptPoints, setPromptPoints] = useState<PromptPoint[]>([]);
+  const [refiningSurface, setRefiningSurface] = useState(false);
   const [analyzingDepth, setAnalyzingDepth] = useState(false);
   const [depthMap, setDepthMap] = useState<string | null>(null);
   const [surfaceMode, setSurfaceMode] = useState<"floor" | "wall">("floor");
@@ -181,6 +186,8 @@ export default function Workspace() {
     setDropTarget(null);
     setDetectionConfidence(null);
     setDetectionWarnings([]);
+    setPromptPoints([]);
+    setSam2PromptMode(false);
     setDepthMap(null);
   }, [apiFetch]);
 
@@ -317,7 +324,16 @@ export default function Workspace() {
         ctx.restore();
       }
     }
-  }, [points, surfaceOutlines, surfaceMode, surfaceProducts, selectedProduct, scale, opacity, pattern, groutWidth, groutColor, dropTarget, surfaceOcclusions, preserveOcclusions]);
+    for (const prompt of promptPoints) {
+      ctx.beginPath();
+      ctx.arc(prompt.x * canvas.width, prompt.y * canvas.height, Math.max(7, canvas.width / 130), 0, Math.PI * 2);
+      ctx.fillStyle = prompt.label === 1 ? "#35c98b" : "#ed6b6b";
+      ctx.fill();
+      ctx.lineWidth = Math.max(2, canvas.width / 700);
+      ctx.strokeStyle = "#ffffff";
+      ctx.stroke();
+    }
+  }, [points, surfaceOutlines, surfaceMode, surfaceProducts, selectedProduct, scale, opacity, pattern, groutWidth, groutColor, dropTarget, surfaceOcclusions, preserveOcclusions, promptPoints]);
 
   useEffect(() => { redraw(); }, [redraw, roomUrl, selectedProduct]);
 
@@ -392,6 +408,27 @@ export default function Workspace() {
   }
 
 
+
+  async function refineSurfaceWithSam2() {
+    if (!selectedProject || promptPoints.length === 0) return;
+    setRefiningSurface(true); setMessage("");
+    try {
+      const response = await apiFetch(API + "/api/v1/projects/" + selectedProject.id + "/refine-surface", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ points: promptPoints }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "SAM 2 point refinement is unavailable.");
+      setPoints(result.points);
+      setSurfaceOutlines(current => ({ ...current, [surfaceMode]: result.points }));
+      setDetectionConfidence(result.confidence ?? null);
+      setDetectionWarnings(Array.isArray(result.warnings) ? result.warnings : []);
+      setSam2PromptMode(false);
+      setMessage("SAM 2 created a point-guided outline locally on " + result.device + ". Review the boundary before applying material.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "SAM 2 refinement failed.");
+    } finally { setRefiningSurface(false); }
+  }
 
   async function analyzeRoomDepth() {
     if (!selectedProject) return;
@@ -503,6 +540,10 @@ export default function Workspace() {
     if (!roomImageRef.current) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const nextPoint = { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height };
+    if (sam2PromptMode) {
+      setPromptPoints(current => [...current, { ...nextPoint, label: promptLabel }]);
+      return;
+    }
     setPoints(current => [...current, nextPoint]);
     setSurfaceOutlines(current => ({...current, [surfaceMode]: [...current[surfaceMode], nextPoint]}));
   }
@@ -527,7 +568,7 @@ export default function Workspace() {
       <section className="visualizer-panel"><div className="visualizer-top"><div><div className="panel-title">03 / PHOTO VISUALIZER</div><h2>{selectedProject?.name || "Choose a project"}</h2></div><span className="visualizer-status">{roomUrl?"ROOM LOADED":"AWAITING PHOTO"}</span></div>
         {!selectedProject ? <div className="visualizer-empty"><div className="empty-symbol">＋</div><h3>Start with a project</h3><p>Create a project on the left, then upload a room photo to begin.</p></div> :
         <><div className="canvas-wrap">{roomUrl?<canvas ref={canvasRef} onClick={addPoint} onDragOver={updateDropTarget} onDragLeave={()=>setDropTarget(null)} onDrop={dropProduct} aria-label="Room photo. Drag a material onto the outlined floor or wall to apply it."/>:<div className="upload-empty"><div className="empty-symbol">↑</div><h3>Upload a room photograph</h3><p>JPG, PNG or WebP · up to 15 MB</p><label className="dark-button">Choose room photo<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div>}</div>
-        {roomUrl&&<div className="visualizer-controls"><div className="control-row"><span>Surface outline</span><span>{points.length<3?"Not detected":points.length+" boundary points"} · Floor: {surfaceOutlines.floor.length>=3?"saved":"—"} · Wall: {surfaceOutlines.wall.length>=3?"saved":"—"}{detectionConfidence!==null?" · "+Math.round(detectionConfidence*100)+"% detection score":""}</span></div><div className="control-row"><span>AI object masks</span><span>{surfaceOcclusions.floor.length + surfaceOcclusions.wall.length} detected · {preserveOcclusions?"preservation on":"preservation off"}</span></div><div className="control-row"><span>Applied materials</span><span>Floor: {products.find(product=>product.id===(surfaceProducts.floor||selectedProduct))?.name||"None"} · Wall: {products.find(product=>product.id===(surfaceProducts.wall||selectedProduct))?.name||"None"}</span></div>{detectionWarnings.length>0&&<ul className="helper">{detectionWarnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>}<div className="range-row"><label style={{display:"flex",alignItems:"center",gap:10}}><input type="checkbox" checked={preserveOcclusions} onChange={e=>setPreserveOcclusions(e.target.checked)}/> Preserve detected furniture and fixtures</label></div><div className="range-row"><label>Surface type <select value={surfaceMode} onChange={e=>{const nextMode=e.target.value as "floor" | "wall";setSurfaceOutlines(current=>({...current,[surfaceMode]:points}));setPoints(surfaceOutlines[nextMode]);setSurfaceMode(nextMode);setDetectionConfidence(null);setDetectionWarnings([]);}}><option value="floor">Floor</option><option value="wall">Wall</option></select></label></div><div className="control-actions"><button disabled={detecting||busy} onClick={()=>void autoDetectFloor()}>{detecting?"Detecting…": "✦ Auto-detect " + (surfaceMode === "floor" ? "floor" : "wall")}</button><button disabled={analyzingDepth||busy} onClick={()=>void analyzeRoomDepth()}>{analyzingDepth?"Analysing…":"✦ AI depth analysis"}</button><button onClick={()=>{setPoints([]);setSurfaceOutlines(current=>({...current,[surfaceMode]:[]}));setSurfaceOcclusions(current=>({...current,[surfaceMode]:[]}));setDetectionConfidence(null);setDetectionWarnings([]);}}>Clear outline</button><button onClick={()=>setPoints(current=>{const next=current.slice(0,-1);setSurfaceOutlines(saved=>({...saved,[surfaceMode]:next}));return next;})}>Undo point</button><label className="file-replace">Replace photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div><div className="range-row"><label>Pattern scale <input type="range" min=".15" max=".9" step=".01" value={scale} onChange={e=>setScale(Number(e.target.value))}/></label><label>Opacity <input type="range" min=".2" max="1" step=".01" value={opacity} onChange={e=>setOpacity(Number(e.target.value))}/></label></div><div className="range-row"><label>Tile layout <select value={pattern} onChange={e=>setPattern(e.target.value)}><option value="grid">Straight / grid</option><option value="brick">Brick / offset</option><option value="diagonal">Diagonal</option><option value="herringbone">Herringbone</option></select></label><label>Grout width <input type="range" min=".004" max=".04" step=".001" value={groutWidth} onChange={e=>setGroutWidth(Number(e.target.value))}/></label></div><div className="range-row"><label>Grout colour <input type="color" value={groutColor} onChange={e=>setGroutColor(e.target.value)}/></label></div><p className="helper-text">Choose Floor or Wall, then use Auto-detect to propose the visible surface boundary from the room photo. Review the result: click the image to add boundary points, use Undo point to refine it, or Clear outline to start again. Detection may need correction around rugs, furniture, reflections or unusual camera angles.</p>{depthMap&&<div className="ai-depth-preview"><strong>Local AI depth map</strong><img src={depthMap} alt="AI-estimated relative scene depth" style={{display:"block",width:"min(220px,100%)",height:"auto",marginTop:8,borderRadius:8}}/><small>Relative depth only · not a floor/wall mask</small></div>}</div>}</>}
+        {roomUrl&&<div className="visualizer-controls"><div className="control-row"><span>Surface outline</span><span>{points.length<3?"Not detected":points.length+" boundary points"} · Floor: {surfaceOutlines.floor.length>=3?"saved":"—"} · Wall: {surfaceOutlines.wall.length>=3?"saved":"—"}{detectionConfidence!==null?" · "+Math.round(detectionConfidence*100)+"% detection score":""}</span></div><div className="control-row"><span>AI object masks</span><span>{surfaceOcclusions.floor.length + surfaceOcclusions.wall.length} detected · {preserveOcclusions?"preservation on":"preservation off"}</span></div><div className="control-row"><span>Applied materials</span><span>Floor: {products.find(product=>product.id===(surfaceProducts.floor||selectedProduct))?.name||"None"} · Wall: {products.find(product=>product.id===(surfaceProducts.wall||selectedProduct))?.name||"None"}</span></div>{detectionWarnings.length>0&&<ul className="helper">{detectionWarnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>}<div className="range-row"><label style={{display:"flex",alignItems:"center",gap:10}}><input type="checkbox" checked={preserveOcclusions} onChange={e=>setPreserveOcclusions(e.target.checked)}/> Preserve detected furniture and fixtures</label></div><div className="range-row"><label>Surface type <select value={surfaceMode} onChange={e=>{const nextMode=e.target.value as "floor" | "wall";setSurfaceOutlines(current=>({...current,[surfaceMode]:points}));setPoints(surfaceOutlines[nextMode]);setSurfaceMode(nextMode);setDetectionConfidence(null);setDetectionWarnings([]);}}><option value="floor">Floor</option><option value="wall">Wall</option></select></label></div><div className="control-actions"><button disabled={detecting||busy} onClick={()=>void autoDetectFloor()}>{detecting?"Detecting…": "✦ Auto-detect " + (surfaceMode === "floor" ? "floor" : "wall")}</button><button onClick={()=>{setSam2PromptMode(value=>!value);setPromptPoints([]);setMessage("Click points on the image: green includes the surface, red excludes objects outside it.");}}>{sam2PromptMode?"Exit SAM 2 points":"✦ SAM 2 point selection"}</button><button disabled={refiningSurface||busy||promptPoints.length===0} onClick={()=>void refineSurfaceWithSam2()}>{refiningSurface?"Refining…":"Refine from points ("+promptPoints.length+")"}</button><button disabled={analyzingDepth||busy} onClick={()=>void analyzeRoomDepth()}>{analyzingDepth?"Analysing…":"✦ AI depth analysis"}</button><button onClick={()=>{setPoints([]);setSurfaceOutlines(current=>({...current,[surfaceMode]:[]}));setSurfaceOcclusions(current=>({...current,[surfaceMode]:[]}));setDetectionConfidence(null);setDetectionWarnings([]);}}>Clear outline</button><button onClick={()=>setPoints(current=>{const next=current.slice(0,-1);setSurfaceOutlines(saved=>({...saved,[surfaceMode]:next}));return next;})}>Undo point</button><label className="file-replace">Replace photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div>{sam2PromptMode&&<div className="range-row"><label>Next point <select value={promptLabel} onChange={e=>setPromptLabel(Number(e.target.value) as 0|1)}><option value={1}>Include surface (green)</option><option value={0}>Exclude object (red)</option></select></label><button onClick={()=>setPromptPoints([])}>Clear prompt points</button><span>{promptPoints.length} prompts · click the room image to add points</span></div>}<div className="range-row"><label>Pattern scale <input type="range" min=".15" max=".9" step=".01" value={scale} onChange={e=>setScale(Number(e.target.value))}/></label><label>Opacity <input type="range" min=".2" max="1" step=".01" value={opacity} onChange={e=>setOpacity(Number(e.target.value))}/></label></div><div className="range-row"><label>Tile layout <select value={pattern} onChange={e=>setPattern(e.target.value)}><option value="grid">Straight / grid</option><option value="brick">Brick / offset</option><option value="diagonal">Diagonal</option><option value="herringbone">Herringbone</option></select></label><label>Grout width <input type="range" min=".004" max=".04" step=".001" value={groutWidth} onChange={e=>setGroutWidth(Number(e.target.value))}/></label></div><div className="range-row"><label>Grout colour <input type="color" value={groutColor} onChange={e=>setGroutColor(e.target.value)}/></label></div><p className="helper-text">Choose Floor or Wall, then use Auto-detect to propose the visible surface boundary from the room photo. Review the result: click the image to add boundary points, use Undo point to refine it, or Clear outline to start again. Detection may need correction around rugs, furniture, reflections or unusual camera angles.</p>{depthMap&&<div className="ai-depth-preview"><strong>Local AI depth map</strong><img src={depthMap} alt="AI-estimated relative scene depth" style={{display:"block",width:"min(220px,100%)",height:"auto",marginTop:8,borderRadius:8}}/><small>Relative depth only · not a floor/wall mask</small></div>}</div>}</>}
       </section>
     </div>
     <footer className="studio-footer"><span>© 2026 SURFACE ANALYZER</span><span>PHOTO WORKFLOW MVP · MULTI-MATERIAL CATALOG</span></footer>
