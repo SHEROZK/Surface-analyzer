@@ -33,6 +33,72 @@ class Sam2OcclusionRefiner:
         self.model = build_sam2(config_path, checkpoint_path, device=self.device)
         self.predictor = SAM2ImagePredictor(self.model)
 
+    def refine_points(self, image: np.ndarray, points: list[dict]) -> dict:
+        """Create an editable surface mask from user positive/negative point prompts."""
+        if image is None or image.ndim != 3 or image.shape[2] != 3:
+            raise ValueError("Expected a decoded three-channel image.")
+        if not points:
+            raise ValueError("Add at least one positive point to guide the mask.")
+        height, width = image.shape[:2]
+        coords = np.asarray([
+            [float(point["x"]) * width, float(point["y"]) * height]
+            for point in points
+        ], dtype=np.float32)
+        labels = np.asarray([int(point.get("label", 1)) for point in points], dtype=np.int32)
+        if not np.isin(labels, [0, 1]).all() or not np.any(labels == 1):
+            raise ValueError("Provide at least one positive point; labels must be 1 (include) or 0 (exclude).")
+        self.predictor.set_image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        masks, scores, _ = self.predictor.predict(
+            point_coords=coords, point_labels=labels, multimask_output=True
+        )
+        if masks is None or len(masks) == 0:
+            raise RuntimeError("SAM 2 did not return a usable mask. Add clearer positive and negative points.")
+        # Prefer the highest-scoring mask that contains every positive prompt and
+        # excludes every negative prompt. Fall back to score only if none qualify.
+        valid = []
+        for index, mask in enumerate(masks):
+            binary = np.asarray(mask, dtype=np.uint8)
+            contains_positive = all(binary[min(height - 1, int(y)), min(width - 1, int(x))] > 0
+                                    for x, y in coords[labels == 1])
+            excludes_negative = all(binary[min(height - 1, int(y)), min(width - 1, int(x))] == 0
+                                    for x, y in coords[labels == 0])
+            if contains_positive and excludes_negative:
+                valid.append(index)
+        best_index = max(valid, key=lambda i: float(scores[i])) if valid else int(np.argmax(scores))
+        binary = np.asarray(masks[best_index], dtype=np.uint8)
+        count, components, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+        if count <= 1:
+            raise RuntimeError("SAM 2 returned an empty surface mask. Add more positive points.")
+        positive_pixels = [(min(height - 1, int(y)), min(width - 1, int(x)))
+                           for x, y in coords[labels == 1]]
+        component_ids = {int(components[y, x]) for y, x in positive_pixels if components[y, x] > 0}
+        if component_ids:
+            component_id = max(component_ids, key=lambda i: int(stats[i, cv2.CC_STAT_AREA]))
+        else:
+            component_id = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        component = np.where(components == component_id, 255, 0).astype(np.uint8)
+        contours, _ = cv2.findContours(component, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            raise RuntimeError("Could not convert the SAM 2 mask into an editable boundary.")
+        contour = max(contours, key=cv2.contourArea)
+        perimeter = cv2.arcLength(contour, True)
+        polygon = cv2.approxPolyDP(contour, max(2.0, perimeter * 0.006), True).reshape(-1, 2)
+        if len(polygon) < 3:
+            raise RuntimeError("The selected mask is too small to form a surface boundary.")
+        if len(polygon) > 48:
+            polygon = cv2.approxPolyDP(contour, max(3.0, perimeter * 0.012), True).reshape(-1, 2)
+        x, y, box_width, box_height = cv2.boundingRect(contour)
+        return {
+            "points": [{"x": round(float(px) / width, 5), "y": round(float(py) / height, 5)}
+                       for px, py in polygon],
+            "bbox": {"x": round(x / width, 5), "y": round(y / height, 5),
+                     "width": round(box_width / width, 5), "height": round(box_height / height, 5)},
+            "confidence": round(float(scores[best_index]), 3),
+            "method": "sam2-point-prompt",
+            "device": self.device,
+            "warnings": ["AI mask generated from your point prompts. Review and correct the boundary before rendering."],
+        }
+
     def refine(self, image: np.ndarray, proposals: list[dict]) -> list[dict]:
         if not proposals:
             return proposals
