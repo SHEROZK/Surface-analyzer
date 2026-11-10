@@ -42,3 +42,17 @@ def test_sam2_point_refinement_requires_positive_prompt():
 
     with pytest.raises(ValueError, match="at least one positive"):
         refiner.refine_points(image, [{"x": 0.1, "y": 0.1, "label": 0}])
+
+
+
+def test_sam2_point_refinement_rejects_masks_that_ignore_negative_prompts():
+    refiner = object.__new__(Sam2OcclusionRefiner)
+    refiner.predictor = FakePredictor()
+    refiner.device = "cpu"
+    image = np.zeros((120, 160, 3), dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="could not satisfy all include/exclude"):
+        refiner.refine_points(image, [
+            {"x": 0.5, "y": 0.5, "label": 1},
+            {"x": 0.5, "y": 0.5, "label": 0},
+        ])
