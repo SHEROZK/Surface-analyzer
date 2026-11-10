@@ -1,3 +1,10 @@
 services:
   api:
     gpus: all
+    build:
+      context: ./apps/api
+      args:
+        INSTALL_AI: "true"
+    volumes:
+      - api_uploads:/data/uploads
+      - ./models:/models:ro
