@@ -6,7 +6,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 type Product = { id: string; name: string; sku?: string; category?: string; brand?: string; collection?: string; width_mm?: number; height_mm?: number; finish?: string; material_url?: string | null; assets?: {id:string;role:string;url:string;name?:string}[] };
 type Project = { id: string; name: string; status: string; room_image_url?: string | null };
 type Asset = { id: string; type: string; url: string };
-type ProjectDetail = { id: string; name: string; status: string; assets: Asset[] };
+type ProjectDetail = { id: string; name: string; status: string; assets: Asset[] };\ntype VisualizationState = { floor: { outline: Point[]; product_id: string | null; occlusions: Occlusion[] }; wall: { outline: Point[]; product_id: string | null; occlusions: Occlusion[] }; render: { preserve_occlusions: boolean; scale: number; opacity: number; pattern: string; grout_width: number; grout_color: string } };
 
 type Point = { x: number; y: number };
 type PromptPoint = Point & { label: 0 | 1 };
@@ -130,7 +130,7 @@ export default function Workspace() {
   const [width, setWidth] = useState("600");
   const [height, setHeight] = useState("600");
   const [finish, setFinish] = useState("Matt");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(false);\n  const [savingVisualization, setSavingVisualization] = useState(false);\n  const [visualizationSavedAt, setVisualizationSavedAt] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [points, setPoints] = useState<{x:number;y:number}[]>([]);
   const [surfaceOutlines, setSurfaceOutlines] = useState<{floor: Point[]; wall: Point[]}>({floor: [], wall: []});
@@ -180,20 +180,55 @@ export default function Workspace() {
     const room = detail.assets.find(asset => asset.type === "room");
     setSelectedProject({ ...detail, room_image_url: room?.url || null } as ProjectDetail & {room_image_url?: string});
     setPoints([]);
-    setSurfaceOutlines({floor: [], wall: []});
-    setSurfaceOcclusions({floor: [], wall: []});
-    setSurfaceProducts({floor: "", wall: ""});
     setDropTarget(null);
     setDetectionConfidence(null);
     setDetectionWarnings([]);
     setPromptPoints([]);
     setSam2PromptMode(false);
     setDepthMap(null);
+    setVisualizationSavedAt(null);
+    const stateResponse = await apiFetch(API + "/api/v1/projects/" + id + "/visualization-state");
+    if (!stateResponse.ok) throw new Error("Could not load this project's saved visualization.");
+    const saved = await stateResponse.json();
+    const state = saved.state as VisualizationState;
+    setSurfaceOutlines({floor: state.floor.outline || [], wall: state.wall.outline || []});
+    setSurfaceOcclusions({floor: state.floor.occlusions || [], wall: state.wall.occlusions || []});
+    setSurfaceProducts({floor: state.floor.product_id || "", wall: state.wall.product_id || ""});
+    setPreserveOcclusions(state.render.preserve_occlusions);
+    setScale(state.render.scale);
+    setOpacity(state.render.opacity);
+    setPattern(state.render.pattern);
+    setGroutWidth(state.render.grout_width);
+    setGroutColor(state.render.grout_color);
+    setPoints(state.floor.outline || []);
+    setSurfaceMode("floor");
+    setVisualizationSavedAt(saved.updated_at || null);
   }, [apiFetch]);
 
   useEffect(() => { if (authToken) void refresh(); }, [refresh, authToken]);
 
-  const roomUrl = (selectedProject as (ProjectDetail & {room_image_url?: string}) | null)?.room_image_url || null;
+
+  async function saveVisualization() {
+    if (!selectedProject) return;
+    setSavingVisualization(true);
+    try {
+      const payload: VisualizationState = {
+        floor: { outline: surfaceOutlines.floor, product_id: surfaceProducts.floor || null, occlusions: surfaceOcclusions.floor },
+        wall: { outline: surfaceOutlines.wall, product_id: surfaceProducts.wall || null, occlusions: surfaceOcclusions.wall },
+        render: { preserve_occlusions: preserveOcclusions, scale, opacity, pattern, grout_width: groutWidth, grout_color: groutColor },
+      };
+      const response = await apiFetch(API + "/api/v1/projects/" + selectedProject.id + "/visualization-state", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "Could not save visualization.");
+      setVisualizationSavedAt(result.updated_at || new Date().toISOString());
+      setMessage("Project visualization saved.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save visualization.");
+    } finally { setSavingVisualization(false); }
+  }
+\n  const roomUrl = (selectedProject as (ProjectDetail & {room_image_url?: string}) | null)?.room_image_url || null;
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -452,7 +487,7 @@ export default function Workspace() {
     if (lastAutoDetectionRef.current === detectionKey) return;
     lastAutoDetectionRef.current = detectionKey;
     void autoDetectFloor();
-  }, [selectedProject?.id, roomUrl]);
+  }, [selectedProject?.id, roomUrl, surfaceOutlines.floor.length]);
 
   async function submitAuth(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setMessage("");
@@ -568,7 +603,7 @@ export default function Workspace() {
       <section className="visualizer-panel"><div className="visualizer-top"><div><div className="panel-title">03 / PHOTO VISUALIZER</div><h2>{selectedProject?.name || "Choose a project"}</h2></div><span className="visualizer-status">{roomUrl?"ROOM LOADED":"AWAITING PHOTO"}</span></div>
         {!selectedProject ? <div className="visualizer-empty"><div className="empty-symbol">＋</div><h3>Start with a project</h3><p>Create a project on the left, then upload a room photo to begin.</p></div> :
         <><div className="canvas-wrap">{roomUrl?<canvas ref={canvasRef} onClick={addPoint} onDragOver={updateDropTarget} onDragLeave={()=>setDropTarget(null)} onDrop={dropProduct} aria-label="Room photo. Drag a material onto the outlined floor or wall to apply it."/>:<div className="upload-empty"><div className="empty-symbol">↑</div><h3>Upload a room photograph</h3><p>JPG, PNG or WebP · up to 15 MB</p><label className="dark-button">Choose room photo<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div>}</div>
-        {roomUrl&&<div className="visualizer-controls"><div className="control-row"><span>Surface outline</span><span>{points.length<3?"Not detected":points.length+" boundary points"} · Floor: {surfaceOutlines.floor.length>=3?"saved":"—"} · Wall: {surfaceOutlines.wall.length>=3?"saved":"—"}{detectionConfidence!==null?" · "+Math.round(detectionConfidence*100)+"% detection score":""}</span></div><div className="control-row"><span>AI object masks</span><span>{surfaceOcclusions.floor.length + surfaceOcclusions.wall.length} detected · {preserveOcclusions?"preservation on":"preservation off"}</span></div><div className="control-row"><span>Applied materials</span><span>Floor: {products.find(product=>product.id===(surfaceProducts.floor||selectedProduct))?.name||"None"} · Wall: {products.find(product=>product.id===(surfaceProducts.wall||selectedProduct))?.name||"None"}</span></div>{detectionWarnings.length>0&&<ul className="helper">{detectionWarnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>}<div className="range-row"><label style={{display:"flex",alignItems:"center",gap:10}}><input type="checkbox" checked={preserveOcclusions} onChange={e=>setPreserveOcclusions(e.target.checked)}/> Preserve detected furniture and fixtures</label></div><div className="range-row"><label>Surface type <select value={surfaceMode} onChange={e=>{const nextMode=e.target.value as "floor" | "wall";setSurfaceOutlines(current=>({...current,[surfaceMode]:points}));setPoints(surfaceOutlines[nextMode]);setSurfaceMode(nextMode);setDetectionConfidence(null);setDetectionWarnings([]);}}><option value="floor">Floor</option><option value="wall">Wall</option></select></label></div><div className="control-actions"><button disabled={detecting||busy} onClick={()=>void autoDetectFloor()}>{detecting?"Detecting…": "✦ Auto-detect " + (surfaceMode === "floor" ? "floor" : "wall")}</button><button onClick={()=>{setSam2PromptMode(value=>!value);setPromptPoints([]);setMessage("Click points on the image: green includes the surface, red excludes objects outside it.");}}>{sam2PromptMode?"Exit SAM 2 points":"✦ SAM 2 point selection"}</button><button disabled={refiningSurface||busy||promptPoints.length===0} onClick={()=>void refineSurfaceWithSam2()}>{refiningSurface?"Refining…":"Refine from points ("+promptPoints.length+")"}</button><button disabled={analyzingDepth||busy} onClick={()=>void analyzeRoomDepth()}>{analyzingDepth?"Analysing…":"✦ AI depth analysis"}</button><button onClick={()=>{setPoints([]);setSurfaceOutlines(current=>({...current,[surfaceMode]:[]}));setSurfaceOcclusions(current=>({...current,[surfaceMode]:[]}));setDetectionConfidence(null);setDetectionWarnings([]);}}>Clear outline</button><button onClick={()=>setPoints(current=>{const next=current.slice(0,-1);setSurfaceOutlines(saved=>({...saved,[surfaceMode]:next}));return next;})}>Undo point</button><label className="file-replace">Replace photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div>{sam2PromptMode&&<div className="range-row"><label>Next point <select value={promptLabel} onChange={e=>setPromptLabel(Number(e.target.value) as 0|1)}><option value={1}>Include surface (green)</option><option value={0}>Exclude object (red)</option></select></label><button onClick={()=>setPromptPoints([])}>Clear prompt points</button><span>{promptPoints.length} prompts · click the room image to add points</span></div>}<div className="range-row"><label>Pattern scale <input type="range" min=".15" max=".9" step=".01" value={scale} onChange={e=>setScale(Number(e.target.value))}/></label><label>Opacity <input type="range" min=".2" max="1" step=".01" value={opacity} onChange={e=>setOpacity(Number(e.target.value))}/></label></div><div className="range-row"><label>Tile layout <select value={pattern} onChange={e=>setPattern(e.target.value)}><option value="grid">Straight / grid</option><option value="brick">Brick / offset</option><option value="diagonal">Diagonal</option><option value="herringbone">Herringbone</option></select></label><label>Grout width <input type="range" min=".004" max=".04" step=".001" value={groutWidth} onChange={e=>setGroutWidth(Number(e.target.value))}/></label></div><div className="range-row"><label>Grout colour <input type="color" value={groutColor} onChange={e=>setGroutColor(e.target.value)}/></label></div><p className="helper-text">Choose Floor or Wall, then use Auto-detect to propose the visible surface boundary from the room photo. Review the result: click the image to add boundary points, use Undo point to refine it, or Clear outline to start again. Detection may need correction around rugs, furniture, reflections or unusual camera angles.</p>{depthMap&&<div className="ai-depth-preview"><strong>Local AI depth map</strong><img src={depthMap} alt="AI-estimated relative scene depth" style={{display:"block",width:"min(220px,100%)",height:"auto",marginTop:8,borderRadius:8}}/><small>Relative depth only · not a floor/wall mask</small></div>}</div>}</>}
+        {roomUrl&&<div className="visualizer-controls"><div className="control-row"><span>Surface outline</span><span>{points.length<3?"Not detected":points.length+" boundary points"} · Floor: {surfaceOutlines.floor.length>=3?"saved":"—"} · Wall: {surfaceOutlines.wall.length>=3?"saved":"—"}{detectionConfidence!==null?" · "+Math.round(detectionConfidence*100)+"% detection score":""}</span></div><div className="control-row"><span>AI object masks</span><span>{surfaceOcclusions.floor.length + surfaceOcclusions.wall.length} detected · {preserveOcclusions?"preservation on":"preservation off"}</span></div><div className="control-row"><span>Applied materials</span><span>Floor: {products.find(product=>product.id===(surfaceProducts.floor||selectedProduct))?.name||"None"} · Wall: {products.find(product=>product.id===(surfaceProducts.wall||selectedProduct))?.name||"None"}</span></div>{detectionWarnings.length>0&&<ul className="helper">{detectionWarnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>}<div className="range-row"><label style={{display:"flex",alignItems:"center",gap:10}}><input type="checkbox" checked={preserveOcclusions} onChange={e=>setPreserveOcclusions(e.target.checked)}/> Preserve detected furniture and fixtures</label></div><div className="range-row"><label>Surface type <select value={surfaceMode} onChange={e=>{const nextMode=e.target.value as "floor" | "wall";setSurfaceOutlines(current=>({...current,[surfaceMode]:points}));setPoints(surfaceOutlines[nextMode]);setSurfaceMode(nextMode);setDetectionConfidence(null);setDetectionWarnings([]);}}><option value="floor">Floor</option><option value="wall">Wall</option></select></label></div><div className="control-actions"><button className="dark-button" disabled={savingVisualization||busy} onClick={()=>void saveVisualization()}>{savingVisualization?"Saving…":"Save project"}</button><span className="helper-text">{visualizationSavedAt?"Last saved: "+new Date(visualizationSavedAt).toLocaleString():"Unsaved changes"}</span><button disabled={detecting||busy} onClick={()=>void autoDetectFloor()}>{detecting?"Detecting…": "✦ Auto-detect " + (surfaceMode === "floor" ? "floor" : "wall")}</button><button onClick={()=>{setSam2PromptMode(value=>!value);setPromptPoints([]);setMessage("Click points on the image: green includes the surface, red excludes objects outside it.");}}>{sam2PromptMode?"Exit SAM 2 points":"✦ SAM 2 point selection"}</button><button disabled={refiningSurface||busy||promptPoints.length===0} onClick={()=>void refineSurfaceWithSam2()}>{refiningSurface?"Refining…":"Refine from points ("+promptPoints.length+")"}</button><button disabled={analyzingDepth||busy} onClick={()=>void analyzeRoomDepth()}>{analyzingDepth?"Analysing…":"✦ AI depth analysis"}</button><button onClick={()=>{setPoints([]);setSurfaceOutlines(current=>({...current,[surfaceMode]:[]}));setSurfaceOcclusions(current=>({...current,[surfaceMode]:[]}));setDetectionConfidence(null);setDetectionWarnings([]);}}>Clear outline</button><button onClick={()=>setPoints(current=>{const next=current.slice(0,-1);setSurfaceOutlines(saved=>({...saved,[surfaceMode]:next}));return next;})}>Undo point</button><label className="file-replace">Replace photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>void uploadRoom(e.target.files?.[0])}/></label></div>{sam2PromptMode&&<div className="range-row"><label>Next point <select value={promptLabel} onChange={e=>setPromptLabel(Number(e.target.value) as 0|1)}><option value={1}>Include surface (green)</option><option value={0}>Exclude object (red)</option></select></label><button onClick={()=>setPromptPoints([])}>Clear prompt points</button><span>{promptPoints.length} prompts · click the room image to add points</span></div>}<div className="range-row"><label>Pattern scale <input type="range" min=".15" max=".9" step=".01" value={scale} onChange={e=>setScale(Number(e.target.value))}/></label><label>Opacity <input type="range" min=".2" max="1" step=".01" value={opacity} onChange={e=>setOpacity(Number(e.target.value))}/></label></div><div className="range-row"><label>Tile layout <select value={pattern} onChange={e=>setPattern(e.target.value)}><option value="grid">Straight / grid</option><option value="brick">Brick / offset</option><option value="diagonal">Diagonal</option><option value="herringbone">Herringbone</option></select></label><label>Grout width <input type="range" min=".004" max=".04" step=".001" value={groutWidth} onChange={e=>setGroutWidth(Number(e.target.value))}/></label></div><div className="range-row"><label>Grout colour <input type="color" value={groutColor} onChange={e=>setGroutColor(e.target.value)}/></label></div><p className="helper-text">Choose Floor or Wall, then use Auto-detect to propose the visible surface boundary from the room photo. Review the result: click the image to add boundary points, use Undo point to refine it, or Clear outline to start again. Detection may need correction around rugs, furniture, reflections or unusual camera angles.</p>{depthMap&&<div className="ai-depth-preview"><strong>Local AI depth map</strong><img src={depthMap} alt="AI-estimated relative scene depth" style={{display:"block",width:"min(220px,100%)",height:"auto",marginTop:8,borderRadius:8}}/><small>Relative depth only · not a floor/wall mask</small></div>}</div>}</>}
       </section>
     </div>
     <footer className="studio-footer"><span>© 2026 SURFACE ANALYZER</span><span>PHOTO WORKFLOW MVP · MULTI-MATERIAL CATALOG</span></footer>
