@@ -46,6 +46,40 @@ class SurfacePromptRequest(BaseModel):
     points: list[SurfacePromptPoint] = Field(min_length=1, max_length=24)
 
 
+class VisualizationPoint(BaseModel):
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+
+
+class VisualizationOcclusion(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    points: list[VisualizationPoint] = Field(min_length=3, max_length=500)
+    confidence: float = Field(ge=0.0, le=1.0)
+    area_ratio: float = Field(ge=0.0, le=1.0)
+    bbox: dict[str, float] | None = None
+
+
+class VisualizationSurfaceState(BaseModel):
+    outline: list[VisualizationPoint] = Field(default_factory=list, max_length=500)
+    product_id: uuid.UUID | None = None
+    occlusions: list[VisualizationOcclusion] = Field(default_factory=list, max_length=100)
+
+
+class VisualizationRenderSettings(BaseModel):
+    preserve_occlusions: bool = True
+    scale: float = Field(default=0.45, ge=0.05, le=2.0)
+    opacity: float = Field(default=0.88, ge=0.0, le=1.0)
+    pattern: str = Field(default="grid", pattern="^(grid|brick|diagonal|herringbone)$")
+    grout_width: float = Field(default=0.012, ge=0.0, le=0.1)
+    grout_color: str = Field(default="#aaa69c", pattern="^#[0-9a-fA-F]{6}$")
+
+
+class ProjectVisualizationState(BaseModel):
+    floor: VisualizationSurfaceState = Field(default_factory=VisualizationSurfaceState)
+    wall: VisualizationSurfaceState = Field(default_factory=VisualizationSurfaceState)
+    render: VisualizationRenderSettings = Field(default_factory=VisualizationRenderSettings)
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -453,6 +487,39 @@ def analyze_room_depth(project_id: uuid.UUID, current_user: User = Depends(get_c
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Local depth inference failed: {str(exc)[:180]}")
+
+
+@app.get("/api/v1/projects/{project_id}/visualization-state", tags=["projects"])
+def get_visualization_state(project_id: uuid.UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    project = db.scalar(select(Project).where(Project.id == project_id, Project.tenant_id == current_user.tenant_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    raw = (project.settings or {}).get("visualization", {})
+    try:
+        state = ProjectVisualizationState.model_validate(raw)
+    except Exception:
+        state = ProjectVisualizationState()
+    return {"state": state.model_dump(mode="json"), "updated_at": project.updated_at}
+
+
+@app.put("/api/v1/projects/{project_id}/visualization-state", tags=["projects"])
+def save_visualization_state(project_id: uuid.UUID, payload: ProjectVisualizationState, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    project = db.scalar(select(Project).where(Project.id == project_id, Project.tenant_id == current_user.tenant_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    product_ids = {surface.product_id for surface in (payload.floor, payload.wall) if surface.product_id is not None}
+    if product_ids:
+        owned = set(db.scalars(select(TileProduct.id).where(
+            TileProduct.id.in_(product_ids), TileProduct.tenant_id == current_user.tenant_id
+        )).all())
+        if owned != product_ids:
+            raise HTTPException(status_code=422, detail="A selected material does not belong to this workspace.")
+    settings = dict(project.settings or {})
+    settings["visualization"] = payload.model_dump(mode="json")
+    project.settings = settings
+    db.commit()
+    db.refresh(project)
+    return {"state": payload.model_dump(mode="json"), "updated_at": project.updated_at}
 
 
 @app.get("/api/v1/projects/{project_id}", tags=["projects"])
