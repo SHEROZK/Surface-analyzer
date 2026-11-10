@@ -59,10 +59,55 @@ function affineTriangle(
   ctx.restore();
 }
 
+function solveLinearSystem(matrix: number[][], values: number[]): number[] | null {
+  const a = matrix.map((row, i) => [...row, values[i]]);
+  const n = values.length;
+  for (let col = 0; col < n; col++) {
+    let pivot = col;
+    for (let row = col + 1; row < n; row++) if (Math.abs(a[row][col]) > Math.abs(a[pivot][col])) pivot = row;
+    if (Math.abs(a[pivot][col]) < 1e-10) return null;
+    [a[col], a[pivot]] = [a[pivot], a[col]];
+    const divisor = a[col][col];
+    for (let j = col; j <= n; j++) a[col][j] /= divisor;
+    for (let row = 0; row < n; row++) {
+      if (row === col) continue;
+      const factor = a[row][col];
+      for (let j = col; j <= n; j++) a[row][j] -= factor * a[col][j];
+    }
+  }
+  return a.map(row => row[n]);
+}
+
+function projectiveTransform(source: Quad, destination: Quad): number[] | null {
+  const matrix: number[][] = [], values: number[] = [];
+  for (let i = 0; i < 4; i++) {
+    const {x, y} = source[i], u = destination[i].x, v = destination[i].y;
+    matrix.push([x, y, 1, 0, 0, 0, -u*x, -u*y]); values.push(u);
+    matrix.push([0, 0, 0, x, y, 1, -v*x, -v*y]); values.push(v);
+  }
+  return solveLinearSystem(matrix, values);
+}
+
+function mapProjective(h: number[], p: Point): Point {
+  const den = h[6]*p.x + h[7]*p.y + 1;
+  return {x:(h[0]*p.x+h[1]*p.y+h[2])/den, y:(h[3]*p.x+h[4]*p.y+h[5])/den};
+}
+
+// Subdivide the homography into a mesh. Each small cell is drawn as two affine
+// triangles, closely approximating true projective mapping without WebGL.
 function drawImageOnQuad(ctx: CanvasRenderingContext2D, image: CanvasImageSource, quad: Quad, width: number, height: number) {
-  const src: Quad = [{x:0,y:0},{x:width,y:0},{x:width,y:height},{x:0,y:height}];
-  affineTriangle(ctx,image,[src[0],src[1],src[2]],[quad[0],quad[1],quad[2]]);
-  affineTriangle(ctx,image,[src[0],src[2],src[3]],[quad[0],quad[2],quad[3]]);
+  const source: Quad = [{x:0,y:0},{x:width,y:0},{x:width,y:height},{x:0,y:height}];
+  const h = projectiveTransform(source, quad);
+  if (!h || h.some(value => !Number.isFinite(value))) return;
+  const divisions = 24;
+  for (let row = 0; row < divisions; row++) for (let col = 0; col < divisions; col++) {
+    const x0 = width*col/divisions, x1 = width*(col+1)/divisions;
+    const y0 = height*row/divisions, y1 = height*(row+1)/divisions;
+    const s00={x:x0,y:y0}, s10={x:x1,y:y0}, s11={x:x1,y:y1}, s01={x:x0,y:y1};
+    const d00=mapProjective(h,s00), d10=mapProjective(h,s10), d11=mapProjective(h,s11), d01=mapProjective(h,s01);
+    affineTriangle(ctx,image,[s00,s10,s11],[d00,d10,d11]);
+    affineTriangle(ctx,image,[s00,s11,s01],[d00,d11,d01]);
+  }
 }
 
 export default function Workspace() {
