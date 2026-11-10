@@ -2,9 +2,9 @@ name: Surface Analyzer CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/semantic-segmentation, feat/visualization-engine-rebuild]
   pull_request:
-    branches: [main]
+    branches: [main, feature/semantic-segmentation]
   workflow_dispatch:
 
 permissions:
