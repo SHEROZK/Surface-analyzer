@@ -64,6 +64,10 @@ class Sam2OcclusionRefiner:
                                     for x, y in coords[labels == 0])
             if contains_positive and excludes_negative:
                 valid.append(index)
+        if not valid and np.any(labels == 0):
+            raise ValueError(
+                "SAM 2 could not satisfy all include/exclude points. Move conflicting points or add clearer prompts."
+            )
         best_index = max(valid, key=lambda i: float(scores[i])) if valid else int(np.argmax(scores))
         binary = np.asarray(masks[best_index], dtype=np.uint8)
         count, components, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
