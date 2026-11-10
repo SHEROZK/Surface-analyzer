@@ -160,9 +160,9 @@ async def capabilities():
     return [
         {"id": "catalog", "name": "Multi-category surface catalog", "status": "available", "description": "Manage tiles, stone, wood, wallpaper, countertops, paint, panels and pavers with multiple product assets."},
         {"id": "projects", "name": "Visualization projects", "status": "available", "description": "Create projects and upload room photographs."},
-        {"id": "surface-analysis", "name": "Surface segmentation", "status": "local-ai-foundation", "description": "Local semantic floor/wall segmentation with object-class occlusion polygons when an approved checkpoint is configured; editable OpenCV fallback otherwise."},
+        {"id": "surface-analysis", "name": "Surface segmentation", "status": "requires-local-model", "description": "Local semantic floor/wall segmentation requires an explicitly configured compatible checkpoint. Automatic heuristic fallback is disabled to prevent false surface proposals; manual outlining remains available."},
         {"id": "ai-depth", "name": "Local AI depth estimation", "status": "optional-local-model", "description": "Depth Anything V2 Small estimates relative scene depth locally when optional AI dependencies are installed; it is not semantic segmentation or metric geometry."},
-        {"id": "photo-renderer", "name": "Photo renderer", "status": "mvp", "description": "Preview material textures inside an automatically detected or manually refined surface polygon; perspective-aware rendering is in development."},
+        {"id": "photo-renderer", "name": "Photo renderer", "status": "projective-preview", "description": "Browser preview uses a subdivided projective homography for planar quadrilateral mapping. Photometric lighting reconstruction, physically based material response, and validated foreground compositing remain unfinished."},
         {"id": "camera-preview", "name": "Live camera preview", "status": "planned", "description": "Live camera material preview is planned after the photo workflow."},
     ]
 
@@ -342,6 +342,11 @@ def detect_surface(project_id: uuid.UUID, mode: str = "floor", current_user: Use
         import cv2
         from .surface_detection import SurfaceDetectionError, detect_floor_boundary, detect_wall_boundary
         provider = get_surface_segmentation_provider()
+        if provider is None:
+            raise HTTPException(
+                status_code=503,
+                detail="AI surface detection is not configured. Use the manual outline for now, or install a compatible local floor/wall segmentation checkpoint. Heuristic auto-detection is disabled because it can select cabinets, shelves, or furniture as a surface.",
+            )
         image = cv2.imread(str(UPLOAD_DIR / room_asset.storage_key))
         if image is None:
             raise HTTPException(status_code=422, detail="Room image could not be decoded.")
