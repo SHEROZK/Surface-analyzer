@@ -52,7 +52,7 @@ SURFACE_SAM2_CONFIG=/app/sam2/configs/sam2.1/sam2.1_hiera_s.yaml
 SURFACE_SAM2_CHECKPOINT=/models/sam2.1_hiera_small.pt
 ```
 
-The current code only invokes SAM2 to refine semantic occlusion boxes. It does not yet expose a full click-prompted SAM2 surface-selection workflow.
+The Studio now exposes positive/negative point prompts for SAM 2 surface selection. The API returns an editable normalized polygon; the user must review and correct it before rendering. Semantic class recognition (floor vs wall) is still a separate, unresolved model-selection problem.
 
 ## GPU installation options
 
@@ -109,10 +109,11 @@ Do not download ADE20K-derived checkpoints or large SAM 2 Large weights as a fir
 
 - [x] Local Transformers provider interface (requires compatible checkpoint).
 - [x] Optional SAM 2 box-refinement adapter (requires matching config/checkpoint).
+- [x] Authenticated SAM 2 point-prompt surface refinement API and Studio controls.
 - [x] Automatic heuristic detection disabled when no semantic provider is configured, to avoid misleading masks.
 - [x] Projective homography mesh mapping in the browser preview.
 - [ ] Commercially cleared floor/wall model selected, downloaded, and benchmarked.
-- [ ] SAM 2 click/brush interactive mask integration.
+- [ ] Brush-based mask editing and persistent per-project mask revisions.
 - [ ] Full perspective-aware scale calibration and tile layout validation.
 - [ ] Photometric lighting/shadow reconstruction and realistic foreground compositing.
 - [ ] Held-out image evaluation and visual quality acceptance gate.
